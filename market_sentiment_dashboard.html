@@ -859,12 +859,13 @@
 
         <div class="metric-card" id="card-gld" style="padding:10px 12px;gap:4px">
           <div class="spike-dot" id="spike-gld"></div>
-          <div class="metric-name" style="font-size:8px">Gold (GLD)</div>
+          <div class="metric-name" style="font-size:8px">Gold Spot (XAU/USD)</div>
           <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">
             <div class="metric-value" id="gldVal" style="font-size:16px">--</div>
             <div class="metric-change" id="gldChange" style="font-size:12px"><span class="change-flat">– –</span></div>
           </div>
           <div id="intensity-gld"></div>
+          <div style="margin-top:2px" id="tlt-sub-label"></div>
           <div class="metric-bar"><div class="metric-bar-fill" id="gldBar" style="width:50%;background:var(--accent-amber)"></div></div>
         </div>
 
@@ -1596,12 +1597,33 @@ async function updateBreadth() {
 }
 
 // ============================
+// SPOT PREISE via Yahoo Finance (XAUUSD, XAGUSD)
+// Gleicher Proxy wie VIX – kein API-Key nötig
+// ============================
+async function fetchSpotPrice(yahooSymbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=5d`;
+  const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+  const res   = await fetch(proxy);
+  const outer = await res.json();
+  const data  = JSON.parse(outer.contents);
+  const result = data?.chart?.result?.[0];
+  if (!result) throw new Error(`Keine Daten für ${yahooSymbol}`);
+  const meta   = result.meta;
+  const closes = (result.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+  const current   = meta.regularMarketPrice ?? closes[closes.length - 1];
+  const prevClose = closes.length >= 2 ? closes[closes.length - 2] : (meta.previousClose ?? current);
+  const change    = current - prevClose;
+  const changePct = (change / prevClose) * 100;
+  return { current, prevClose, change, changePct };
+}
+
+// ============================
 // MAIN SENTIMENT UPDATE
 // ============================
 async function updateSentimentMetrics() {
   try {
     // Ein einziger API-Call für alle Symbole – funktioniert 24/7
-    const allSyms = ['SPY', 'QQQ', 'GLD', 'TLT'];
+    const allSyms = ['SPY', 'QQQ', 'TLT'];
     const allBars = await getDailyBars(allSyms);
 
     let scores = [];
@@ -1622,13 +1644,49 @@ async function updateSentimentMetrics() {
       scores.push(setMetricCard('qqq', `$${price.toFixed(2)}`, change, changePct, cls));
     }
 
-    // GLD
-    const gldResult = extractPriceChange(allBars['GLD']);
-    if (gldResult) {
-      const { price, change, changePct } = gldResult;
+    // XAUUSD – Gold Spot via Yahoo Finance (parallel zu VIX-Fetch)
+    try {
+      const xauResult = await fetchSpotPrice('XAUUSD=X');
+      const { current, change, changePct } = xauResult;
       const cls = changePct > 0.5 ? 'warning' : changePct < -0.5 ? 'info' : 'neutral';
-      setMetricCard('gld', `$${price.toFixed(2)}`, change, changePct, cls);
+      setMetricCard('gld',
+        `$${current.toFixed(0)}`,  // Spot-Preis in $ (z.B. $3.245)
+        change, changePct, cls);
+      // Name-Label auf Karte aktualisieren
+      const nameEl = document.querySelector('#card-gld .metric-name');
+      if (nameEl) nameEl.textContent = 'Gold Spot (XAU/USD)';
+    } catch(e) {
+      // Fallback auf GLD ETF
+      try {
+        const gldBars = await getDailyBars(['GLD']);
+        const gldResult = extractPriceChange(gldBars['GLD']);
+        if (gldResult) {
+          const { price, change, changePct } = gldResult;
+          setMetricCard('gld', `$${price.toFixed(2)}`, change, changePct, 'neutral');
+        }
+      } catch(e2) {
+        document.getElementById('gldVal').textContent = 'N/A';
+      }
     }
+
+    // XAGUSD – Silber Spot via Yahoo Finance
+    try {
+      const xagResult = await fetchSpotPrice('XAGUSD=X');
+      const { current, change, changePct } = xagResult;
+      const cls = changePct > 0.5 ? 'warning' : changePct < -0.5 ? 'info' : 'neutral';
+      // Silber zeigt im TLT-Slot wenn Silber-Kachel existiert, sonst DXY-Slot
+      const silverId = document.getElementById('card-xag') ? 'xag' : 'tlt';
+      if (silverId === 'tlt') {
+        // Silber-Info als Sub-Label unter TLT anzeigen
+        const tltSubEl = document.getElementById('tlt-sub-label');
+        if (tltSubEl) {
+          const sign = changePct >= 0 ? '+' : '';
+          tltSubEl.innerHTML = `<span style="font-size:9px;color:#c0c0c0">XAG/USD: $${current.toFixed(2)} <span style="color:${changePct>=0?'var(--accent-green)':'var(--accent-red)'}">${sign}${changePct.toFixed(2)}%</span></span>`;
+        }
+      }
+      // Silber-Kachel direkt befüllen (falls vorhanden)
+      setMetricCard('gld-xag', `$${current.toFixed(2)}`, change, changePct, cls);
+    } catch(e) { /* Silber optional */ }
 
     // TLT
     const tltResult = extractPriceChange(allBars['TLT']);
@@ -1638,7 +1696,7 @@ async function updateSentimentMetrics() {
       scores.push(setMetricCard('tlt', `$${price.toFixed(2)}`, change, changePct, cls));
     }
 
-    // DXY proxy via UUP ETF – separater Call (optional)
+    // DXY proxy via UUP ETF
     try {
       const uupBars = await getDailyBars(['UUP']);
       const uupResult = extractPriceChange(uupBars['UUP']);
