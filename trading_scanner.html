@@ -385,8 +385,73 @@ body::before {
 }
 .status-dot { width:5px; height:5px; border-radius:50%; display:inline-block; margin-right:5px; }
 
-/* ── RESPONSIVE ── */
-@media (max-width: 600px) {
+/* ── PRINT / PDF ── */
+@media print {
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  body { background: #fff !important; color: #111 !important; }
+
+  .header, .config-bar, .filter-bar, .threshold-bar,
+  .loading-overlay, .status-bar, #btnPdf, #btnScan,
+  #btnClear, #iosWarning, .section-hdr .count-badge { display: none !important; }
+
+  .app { padding: 0 !important; max-width: 100% !important; }
+
+  .section-hdr { margin-bottom: 12px; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
+  .section-title { font-size: 14px !important; color: #111 !important; }
+
+  .candidates-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 10px !important;
+    padding-bottom: 0 !important;
+  }
+
+  .cand-card {
+    background: #fff !important;
+    border: 1px solid #ccc !important;
+    border-radius: 6px !important;
+    padding: 10px !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .cand-card::before { -webkit-print-color-adjust: exact !important; }
+  .cand-card.strong-buy::before { background: #00c060 !important; }
+  .cand-card.buy::before        { background: #5ab030 !important; }
+  .cand-card.watch::before      { background: #e0a000 !important; }
+
+  .card-sym  { color: #111 !important; font-size: 15px !important; }
+  .card-name { color: #555 !important; }
+  .card-sector { color: #888 !important; }
+  .mc-label  { color: #777 !important; }
+  .mc-val    { color: #111 !important; }
+  .price-val { color: #111 !important; }
+
+  .score-ring-bg   { stroke: #ddd !important; }
+  .score-num       { color: #111 !important; }
+
+  .card-signals { gap: 3px !important; }
+  .sig-badge { font-size: 8px !important; border: 1px solid #ccc !important; color: #333 !important; background: #f5f5f5 !important; }
+
+  .card-price { border-top: 1px solid #ddd !important; }
+
+  .rating-label { border: 1px solid #aaa !important; }
+  .rating-sb { background: #e6fff0 !important; color: #007a40 !important; }
+  .rating-b  { background: #f0ffe6 !important; color: #3a6a10 !important; }
+  .rating-w  { background: #fff8e0 !important; color: #7a5000 !important; }
+
+  /* PDF header printed at top */
+  .pdf-header { display: block !important; }
+}
+
+.pdf-header {
+  display: none;
+  padding: 0 0 12px 0;
+  border-bottom: 2px solid #111;
+  margin-bottom: 16px;
+}
+.pdf-header-title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.pdf-header-meta  { font-size: 11px; color: #555; margin-top: 4px; }
   .candidates-grid { grid-template-columns: 1fr; }
   .card-metrics { grid-template-columns: repeat(2, 1fr); }
   .config-bar { gap:6px; }
@@ -447,6 +512,13 @@ body::before {
         <option value="live">Live</option>
       </select>
     </div>
+    <div class="cfg-field" style="max-width:150px">
+      <span class="cfg-label">Trading Modus</span>
+      <select id="tradeMode" class="cfg-select">
+        <option value="swing">📈 Swing (2-10d)</option>
+        <option value="day">⚡ Day Trading</option>
+      </select>
+    </div>
     <div class="cfg-field" style="max-width:120px">
       <span class="cfg-label">Top N je Sektor</span>
       <select id="topN" class="cfg-select">
@@ -505,7 +577,18 @@ body::before {
   <!-- RESULTS HEADER -->
   <div class="section-hdr">
     <span class="section-title" id="sectionTitle">Kandidaten werden geladen...</span>
-    <span class="count-badge" id="countBadge">0 Kandidaten</span>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="count-badge" id="countBadge">0 Kandidaten</span>
+      <button id="btnPdf" class="btn-scan" style="font-size:10px;padding:5px 12px;background:transparent;border:1px solid var(--border);color:var(--muted);display:none">
+        ⬇ PDF
+      </button>
+    </div>
+  </div>
+
+  <!-- PDF HEADER (nur beim Drucken sichtbar) -->
+  <div class="pdf-header" id="pdfHeader">
+    <div class="pdf-header-title">WS ANALYST · TRADE.SCAN</div>
+    <div class="pdf-header-meta" id="pdfMeta"></div>
   </div>
 
   <!-- CANDIDATES -->
@@ -637,92 +720,238 @@ async function fetchVIX() {
 }
 
 // ═══════════════════════════════════════════════
-// SCORING ENGINE
+// SCORING ENGINE – DUAL MODE
 // ═══════════════════════════════════════════════
+
+// Positionsgröße für Liquiditäts-Berechnung
+const POSITION_SIZE = 6000; // $6.000 Mitte 5k-7k
+
 function calcMA(bars, period) {
   if (bars.length < period) return null;
-  const slice = bars.slice(-period);
-  return slice.reduce((s, b) => s + b.c, 0) / period;
+  return bars.slice(-period).reduce((s, b) => s + b.c, 0) / period;
 }
 
-function calcAvgVolume(bars, period = 10) {
+function calcATR(bars, period = 14) {
+  if (bars.length < period + 1) return null;
+  const slice = bars.slice(-(period + 1));
+  let atrSum = 0;
+  for (let i = 1; i < slice.length; i++) {
+    const h = slice[i].h, l = slice[i].l, pc = slice[i-1].c;
+    atrSum += Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+  }
+  return atrSum / period;
+}
+
+function calcAvgVolume(bars, period = 20) {
   if (bars.length < 2) return null;
-  const slice = bars.slice(-Math.min(period, bars.length - 1), -1);
+  const slice = bars.slice(-Math.min(period + 1, bars.length - 1), -1);
   if (!slice.length) return null;
   return slice.reduce((s, b) => s + (b.v || 0), 0) / slice.length;
 }
 
-function scoreCandidate(sym, bars, spyBars) {
-  if (!bars || bars.length < 5) return null;
+function calcDollarVolume(bar) {
+  if (!bar) return 0;
+  return (bar.c || 0) * (bar.v || 0);
+}
 
-  const last    = bars[bars.length - 1];
-  const prev    = bars[bars.length - 2];
-  const price   = last.c;
+function calcAvgDollarVolume(bars, period = 20) {
+  if (bars.length < 2) return null;
+  const slice = bars.slice(-Math.min(period + 1, bars.length - 1), -1);
+  if (!slice.length) return null;
+  return slice.reduce((s, b) => s + b.c * (b.v || 0), 0) / slice.length;
+}
+
+// Swing: Mehrtages-Momentum über 3 und 5 Tage
+function calcSwingMomentum(bars) {
+  if (bars.length < 6) return { pct3: null, pct5: null };
+  const last = bars[bars.length - 1].c;
+  const ago3 = bars[bars.length - 4]?.c;
+  const ago5 = bars[bars.length - 6]?.c;
+  return {
+    pct3: ago3 ? ((last - ago3) / ago3) * 100 : null,
+    pct5: ago5 ? ((last - ago5) / ago5) * 100 : null,
+  };
+}
+
+// Swing RS: Outperformance über 5 Tage vs SPY
+function calcSwingRS(bars, spyBars) {
+  if (bars.length < 6 || !spyBars || spyBars.length < 6) return null;
+  const symChg  = ((bars[bars.length-1].c - bars[bars.length-6].c) / bars[bars.length-6].c) * 100;
+  const spyChg  = ((spyBars[spyBars.length-1].c - spyBars[spyBars.length-6].c) / spyBars[spyBars.length-6].c) * 100;
+  return symChg - spyChg;
+}
+
+// Intraday-Momentum: (Close - Low) / (High - Low) → 1 = sehr bullisch
+function calcIntradayMom(bar) {
+  if (!bar || !bar.h || !bar.l || bar.h === bar.l) return null;
+  return (bar.c - bar.l) / (bar.h - bar.l);
+}
+
+// ── SWING TRADING SCORE (0–100) ──
+function scoreSwing(sym, bars, spyBars) {
+  if (!bars || bars.length < 6) return null;
+
+  const last      = bars[bars.length - 1];
+  const prev      = bars[bars.length - 2];
+  const price     = last.c;
   const prevClose = prev.c;
   const changePct = ((price - prevClose) / prevClose) * 100;
 
-  // ── 1. MOMENTUM (0–25 Punkte) ──
-  let momScore = 0;
-  let momSignal = false;
-  if      (changePct >= 3.0) { momScore = 25; momSignal = true; }
-  else if (changePct >= 2.0) { momScore = 20; momSignal = true; }
-  else if (changePct >= 1.0) { momScore = 15; momSignal = true; }
-  else if (changePct >= 0.5) { momScore = 8; }
-  else if (changePct > 0)    { momScore = 3; }
+  // 1. Mehrtages-Momentum (0-25)
+  let momScore = 0, momSignal = false;
+  const { pct3, pct5 } = calcSwingMomentum(bars);
+  const swingMom = pct5 ?? pct3 ?? changePct;
+  if      (swingMom >= 5.0) { momScore = 25; momSignal = true; }
+  else if (swingMom >= 3.0) { momScore = 20; momSignal = true; }
+  else if (swingMom >= 1.5) { momScore = 13; momSignal = true; }
+  else if (swingMom >= 0.5) { momScore = 6; }
+  else if (swingMom > 0)    { momScore = 2; }
 
-  // ── 2. VOLUME SURGE (0–25 Punkte) ──
-  let volScore = 0;
-  let volSignal = false;
-  const avgVol = calcAvgVolume(bars);
-  const todayVol = last.v || 0;
-  if (avgVol && avgVol > 0) {
-    const volRatio = todayVol / avgVol;
-    if      (volRatio >= 3.0) { volScore = 25; volSignal = true; }
-    else if (volRatio >= 2.0) { volScore = 20; volSignal = true; }
-    else if (volRatio >= 1.5) { volScore = 12; volSignal = true; }
-    else if (volRatio >= 1.2) { volScore = 6; }
+  // 2. Relative Strength 5d vs SPY (0-25)
+  let rsScore = 0, rsSignal = false;
+  const rs5d = calcSwingRS(bars, spyBars);
+  if (rs5d !== null) {
+    if      (rs5d >= 3.0) { rsScore = 25; rsSignal = true; }
+    else if (rs5d >= 1.5) { rsScore = 18; rsSignal = true; }
+    else if (rs5d >= 0.5) { rsScore = 10; rsSignal = true; }
+    else if (rs5d >= 0)   { rsScore = 3; }
   }
 
-  // ── 3. TREND / MA (0–25 Punkte) ──
-  let trendScore = 0;
-  let trendSignal = false;
-  const ma20  = calcMA(bars, 20);
-  const ma50  = calcMA(bars, Math.min(50, bars.length));
-  const ma10  = calcMA(bars, 10);
-  if (ma20 && price > ma20) { trendScore += 10; }
-  if (ma50 && price > ma50) { trendScore += 10; }
+  // 3. Trend / MA (0-25)
+  let trendScore = 0, trendSignal = false;
+  const ma10 = calcMA(bars, 10);
+  const ma20 = calcMA(bars, 20);
+  const ma50 = calcMA(bars, Math.min(50, bars.length));
+  if (ma20 && price > ma20) trendScore += 10;
+  if (ma50 && price > ma50) trendScore += 10;
   if (ma10 && ma20 && ma10 > ma20) { trendScore += 5; trendSignal = true; }
   if (trendScore >= 15) trendSignal = true;
 
-  // ── 4. RELATIVE STRENGTH vs SPY (0–25 Punkte) ──
-  let rsScore = 0;
-  let rsSignal = false;
-  if (spyBars && spyBars.length >= 2) {
-    const spyLast = spyBars[spyBars.length - 1];
-    const spyPrev = spyBars[spyBars.length - 2];
-    const spyChg  = ((spyLast.c - spyPrev.c) / spyPrev.c) * 100;
-    const rsDiff  = changePct - spyChg;
-    if      (rsDiff >= 2.0) { rsScore = 25; rsSignal = true; }
-    else if (rsDiff >= 1.0) { rsScore = 18; rsSignal = true; }
-    else if (rsDiff >= 0.5) { rsScore = 10; rsSignal = true; }
-    else if (rsDiff >= 0)   { rsScore = 4; }
+  // 4. Dollar Volume Liquidität (0-25) – Swing: min $20M/Tag
+  let liqScore = 0, liqSignal = false;
+  const avgDV = calcAvgDollarVolume(bars, 20);
+  const MIN_DV_SWING = 20e6;
+  if (avgDV) {
+    const dvM = avgDV / 1e6;
+    if      (dvM >= 500)  { liqScore = 25; liqSignal = true; }
+    else if (dvM >= 100)  { liqScore = 20; liqSignal = true; }
+    else if (dvM >= 50)   { liqScore = 15; liqSignal = true; }
+    else if (dvM >= 20)   { liqScore = 8; }
+    else                  { liqScore = 0; } // unter Minimum → 0
   }
 
-  const totalScore = momScore + volScore + trendScore + rsScore;
-
-  // VIX Warnung
-  const vixWarn = vixLevel && vixLevel > 25;
+  // ATR für R/R-Berechnung
+  const atr     = calcATR(bars);
+  const atrPct  = atr ? (atr / price) * 100 : null;
+  const avgVol  = calcAvgVolume(bars, 20);
+  const todayVol= last.v || 0;
+  const avgDolV = avgDV || 0;
+  const posPct  = avgDolV > 0 ? (POSITION_SIZE / avgDolV) * 100 : null;
+  const volRatio= avgVol && avgVol > 0 ? todayVol / avgVol : null;
 
   return {
-    sym, price, prevClose, changePct,
-    score: totalScore,
-    momScore, volScore, trendScore, rsScore,
-    momSignal, volSignal, trendSignal, rsSignal,
-    ma20, ma50,
-    avgVol, todayVol,
-    volRatio: avgVol ? todayVol / avgVol : null,
-    vixWarn,
+    sym, price, prevClose, changePct, mode: 'swing',
+    score: momScore + rsScore + trendScore + liqScore,
+    momScore, rsScore, trendScore, liqScore,
+    momSignal, rsSignal, trendSignal, liqSignal,
+    ma10, ma20, ma50, atr, atrPct, avgVol, todayVol, volRatio,
+    avgDollarVol: avgDolV, posPct, pct3, pct5, rs5d,
+    stopLoss:  atr ? price - 1.5 * atr : null,
+    target:    atr ? price + 3.0 * atr : null,
+    vixWarn:   vixLevel && vixLevel > 25,
+    liqWarn:   avgDV && avgDV < MIN_DV_SWING,
   };
+}
+
+// ── DAY TRADING SCORE (0–100) ──
+function scoreDay(sym, bars, spyBars) {
+  if (!bars || bars.length < 5) return null;
+
+  const last      = bars[bars.length - 1];
+  const prev      = bars[bars.length - 2];
+  const price     = last.c;
+  const prevClose = prev.c;
+  const changePct = ((price - prevClose) / prevClose) * 100;
+
+  // 1. Dollar Volume (0-30) – Day: min $50M/Tag
+  let liqScore = 0, liqSignal = false;
+  const avgDV = calcAvgDollarVolume(bars, 20);
+  const MIN_DV_DAY = 50e6;
+  if (avgDV) {
+    const dvM = avgDV / 1e6;
+    if      (dvM >= 1000) { liqScore = 30; liqSignal = true; }
+    else if (dvM >= 500)  { liqScore = 25; liqSignal = true; }
+    else if (dvM >= 200)  { liqScore = 18; liqSignal = true; }
+    else if (dvM >= 100)  { liqScore = 12; liqSignal = true; }
+    else if (dvM >= 50)   { liqScore = 5; }
+    else                  { liqScore = 0; }
+  }
+
+  // 2. Relative Volume heute (0-25) – erhöhtes Interesse = Bewegung
+  let rvolScore = 0, rvolSignal = false;
+  const avgVol  = calcAvgVolume(bars, 20);
+  const todayVol= last.v || 0;
+  const volRatio= avgVol && avgVol > 0 ? todayVol / avgVol : null;
+  if (volRatio) {
+    if      (volRatio >= 3.0) { rvolScore = 25; rvolSignal = true; }
+    else if (volRatio >= 2.0) { rvolScore = 20; rvolSignal = true; }
+    else if (volRatio >= 1.5) { rvolScore = 13; rvolSignal = true; }
+    else if (volRatio >= 1.2) { rvolScore = 6; }
+  }
+
+  // 3. ATR % – Volatilitätspotenzial (0-25)
+  let atrScore = 0, atrSignal = false;
+  const atr    = calcATR(bars);
+  const atrPct = atr ? (atr / price) * 100 : null;
+  if (atrPct) {
+    if      (atrPct >= 4.0) { atrScore = 25; atrSignal = true; }
+    else if (atrPct >= 2.5) { atrScore = 20; atrSignal = true; }
+    else if (atrPct >= 1.5) { atrScore = 13; atrSignal = true; }
+    else if (atrPct >= 0.8) { atrScore = 6; }
+  }
+
+  // 4. Intraday-Momentum (0-20) – Close-Position im Tagesrange
+  let intScore = 0, intSignal = false;
+  const intMom = calcIntradayMom(last);
+  if (intMom !== null) {
+    if      (intMom >= 0.8) { intScore = 20; intSignal = true; } // nahe Tageshoch
+    else if (intMom >= 0.6) { intScore = 15; intSignal = true; }
+    else if (intMom >= 0.4) { intScore = 8; }
+    else if (intMom >= 0.2) { intScore = 3; }
+    // < 0.2 = nahe Tagestief → schwaches Signal
+  }
+
+  const avgDolV = avgDV || 0;
+  const posPct  = avgDolV > 0 ? (POSITION_SIZE / avgDolV) * 100 : null;
+
+  // MA für Karte
+  const ma10 = calcMA(bars, 10);
+  const ma20 = calcMA(bars, 20);
+  const ma50 = calcMA(bars, Math.min(50, bars.length));
+
+  return {
+    sym, price, prevClose, changePct, mode: 'day',
+    score: liqScore + rvolScore + atrScore + intScore,
+    liqScore, rvolScore, atrScore, intScore,
+    liqSignal, rvolSignal, atrSignal, intSignal,
+    ma10, ma20, ma50, atr, atrPct, avgVol, todayVol, volRatio,
+    avgDollarVol: avgDolV, posPct,
+    // Day-Trade R/R: 1×ATR Stop, 2×ATR Target (eng, schnell)
+    stopLoss: atr ? price - 1.0 * atr : null,
+    target:   atr ? price + 2.0 * atr : null,
+    vixWarn:  vixLevel && vixLevel > 25,
+    liqWarn:  avgDV && avgDV < MIN_DV_DAY,
+    // Kein momSignal/trendSignal im Day-Mode → für Filterlogik
+    momSignal: intSignal,
+    volSignal: rvolSignal,
+    trendSignal: atrSignal,
+    rsSignal: liqSignal,
+  };
+}
+
+function scoreCandidate(sym, bars, spyBars) {
+  const mode = document.getElementById('tradeMode')?.value || 'swing';
+  return mode === 'day' ? scoreDay(sym, bars, spyBars) : scoreSwing(sym, bars, spyBars);
 }
 
 // ═══════════════════════════════════════════════
@@ -754,88 +983,127 @@ function getScoreColor(score) {
 // ═══════════════════════════════════════════════
 // RENDER
 // ═══════════════════════════════════════════════
+function fmtDV(dv) {
+  if (!dv) return '--';
+  if (dv >= 1e9) return `$${(dv/1e9).toFixed(1)}B`;
+  if (dv >= 1e6) return `$${(dv/1e6).toFixed(0)}M`;
+  return `$${(dv/1e3).toFixed(0)}K`;
+}
+
 function renderCard(c, sectorName) {
   const rating = getRating(c.score);
   if (!rating) return '';
 
   const [rLabel, rClass] = getRatingLabel(rating);
-  const color = getScoreColor(c.score);
-  const isUp  = c.changePct >= 0;
-  const sign  = isUp ? '+' : '';
+  const color  = getScoreColor(c.score);
+  const isUp   = c.changePct >= 0;
+  const sign   = isUp ? '+' : '';
+  const isDay  = c.mode === 'day';
 
-  // Score ring SVG
   const R = 22, circ = 2 * Math.PI * R;
   const offset = circ - (c.score / 100) * circ;
 
+  // Liquiditäts-Ampel
+  const dvM = c.avgDollarVol / 1e6;
+  const liqColor = dvM >= (isDay ? 200 : 100) ? 'var(--green)' : dvM >= (isDay ? 50 : 20) ? 'var(--amber)' : 'var(--red)';
+  const posPctColor = c.posPct < 0.1 ? 'var(--green)' : c.posPct < 0.5 ? 'var(--amber)' : 'var(--red)';
+
   // Signals
   let signals = '';
-  if (c.momSignal)   signals += `<span class="sig-badge sig-mom">▲ MOMENTUM</span>`;
-  if (c.volSignal)   signals += `<span class="sig-badge sig-vol">⚡ VOLUME ×${c.volRatio?.toFixed(1)||'?'}</span>`;
-  if (c.trendSignal) signals += `<span class="sig-badge sig-trend">→ TREND</span>`;
-  if (c.rsSignal)    signals += `<span class="sig-badge sig-rs">★ RS vs SPY</span>`;
-  if (c.vixWarn)     signals += `<span class="sig-badge sig-warn">⚠ VIX ${vixLevel?.toFixed(0)}</span>`;
+  if (isDay) {
+    if (c.liqSignal)  signals += `<span class="sig-badge sig-rs">💧 LIQ ${fmtDV(c.avgDollarVol)}</span>`;
+    if (c.rvolSignal) signals += `<span class="sig-badge sig-vol">⚡ RVOL ×${c.volRatio?.toFixed(1)||'?'}</span>`;
+    if (c.atrSignal)  signals += `<span class="sig-badge sig-trend">◈ ATR ${c.atrPct?.toFixed(1)||'?'}%</span>`;
+    if (c.intSignal)  signals += `<span class="sig-badge sig-mom">▲ INTRADAY</span>`;
+  } else {
+    if (c.momSignal)   signals += `<span class="sig-badge sig-mom">▲ SWING MOM</span>`;
+    if (c.rsSignal)    signals += `<span class="sig-badge sig-rs">★ RS 5d</span>`;
+    if (c.trendSignal) signals += `<span class="sig-badge sig-trend">→ TREND</span>`;
+    if (c.liqSignal)   signals += `<span class="sig-badge sig-vol">💧 LIQ ${fmtDV(c.avgDollarVol)}</span>`;
+  }
+  if (c.vixWarn) signals += `<span class="sig-badge sig-warn">⚠ VIX ${vixLevel?.toFixed(0)}</span>`;
+  if (c.liqWarn) signals += `<span class="sig-badge sig-warn">⚠ LIQ TIEF</span>`;
 
-  // MA info
-  const ma20txt = c.ma20 ? `$${c.ma20.toFixed(1)}` : '--';
-  const ma50txt = c.ma50 ? `$${c.ma50.toFixed(1)}` : '--';
+  // Metriken – unterschiedlich je Modus
+  const metrics = isDay ? `
+    <div class="metric-cell">
+      <span class="mc-label">Ø $-Vol</span>
+      <span class="mc-val" style="color:${liqColor}">${fmtDV(c.avgDollarVol)}</span>
+    </div>
+    <div class="metric-cell">
+      <span class="mc-label">RVOL</span>
+      <span class="mc-val" style="color:${c.rvolSignal?'var(--cyan)':'var(--text)'}">${c.volRatio?c.volRatio.toFixed(1)+'×':'--'}</span>
+    </div>
+    <div class="metric-cell">
+      <span class="mc-label">ATR %</span>
+      <span class="mc-val" style="color:${c.atrSignal?'var(--accent-purple)':'var(--text)'}">${c.atrPct?c.atrPct.toFixed(1)+'%':'--'}</span>
+    </div>
+    <div class="metric-cell">
+      <span class="mc-label">Pos. %Vol</span>
+      <span class="mc-val" style="color:${posPctColor}">${c.posPct?c.posPct.toFixed(3)+'%':'--'}</span>
+    </div>` : `
+    <div class="metric-cell">
+      <span class="mc-label">3d %</span>
+      <span class="mc-val" style="color:${c.pct3&&c.pct3>0?'var(--green)':'var(--red)'}">${c.pct3?(c.pct3>0?'+':'')+c.pct3.toFixed(2)+'%':'--'}</span>
+    </div>
+    <div class="metric-cell">
+      <span class="mc-label">5d RS</span>
+      <span class="mc-val" style="color:${c.rs5d&&c.rs5d>0?'var(--green)':'var(--red)'}">${c.rs5d?(c.rs5d>0?'+':'')+c.rs5d.toFixed(2)+'%':'--'}</span>
+    </div>
+    <div class="metric-cell">
+      <span class="mc-label">ATR</span>
+      <span class="mc-val">${c.atr?'$'+c.atr.toFixed(2):'--'}</span>
+    </div>
+    <div class="metric-cell">
+      <span class="mc-label">Pos. %Vol</span>
+      <span class="mc-val" style="color:${posPctColor}">${c.posPct?c.posPct.toFixed(3)+'%':'--'}</span>
+    </div>`;
+
+  // R/R Zeile
+  const rrRow = (c.stopLoss && c.target) ? `
+    <div style="display:flex;justify-content:space-between;padding:6px 0 0;font-size:10px;border-top:1px solid var(--border);margin-top:4px">
+      <span style="color:var(--red)">Stop: $${c.stopLoss.toFixed(2)}</span>
+      <span style="color:var(--muted)">${isDay?'R/R 1:2':'R/R 1:2'}</span>
+      <span style="color:var(--green)">Ziel: $${c.target.toFixed(2)}</span>
+    </div>` : '';
+
   const aboveMa = c.ma20 && c.price > c.ma20;
 
   return `
   <div class="cand-card ${rating}" data-rating="${rating}" data-signals="${[c.momSignal?'momentum':'',c.volSignal?'volume':'',c.trendSignal?'trend':''].filter(Boolean).join(',')}">
+    <div style="position:absolute;top:8px;right:8px;font-size:8px;letter-spacing:0.1em;color:var(--dim)">${isDay?'DAY':'SWING'}</div>
     <div class="card-top">
       <div>
         <div class="card-sym" style="color:${color}">${c.sym}</div>
         <div class="card-name">${sectorName}</div>
-        <div class="card-sector">${aboveMa ? '▲ über MA20' : '▼ unter MA20'}</div>
+        <div class="card-sector">${aboveMa?'▲ über MA20':'▼ unter MA20'}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
         <div class="score-ring">
           <svg width="52" height="52" viewBox="0 0 52 52">
             <circle class="score-ring-bg" cx="26" cy="26" r="${R}"/>
             <circle class="score-ring-fill" cx="26" cy="26" r="${R}"
-              stroke="${color}"
-              stroke-dasharray="${circ}"
-              stroke-dashoffset="${offset}"
-              transform="rotate(-90 26 26)"
-            />
+              stroke="${color}" stroke-dasharray="${circ}" stroke-dashoffset="${offset}"
+              transform="rotate(-90 26 26)"/>
           </svg>
           <div class="score-num" style="color:${color}">${c.score}</div>
         </div>
         <span class="rating-label ${rClass}">${rLabel}</span>
       </div>
     </div>
-
-    <div class="card-metrics">
-      <div class="metric-cell">
-        <span class="mc-label">Tag %</span>
-        <span class="mc-val" style="color:${isUp?'var(--green)':'var(--red)'}">${sign}${c.changePct.toFixed(2)}%</span>
-      </div>
-      <div class="metric-cell">
-        <span class="mc-label">Vol ×</span>
-        <span class="mc-val" style="color:${c.volSignal?'var(--cyan)':'var(--text)'}">${c.volRatio?c.volRatio.toFixed(1)+'×':'--'}</span>
-      </div>
-      <div class="metric-cell">
-        <span class="mc-label">MA20</span>
-        <span class="mc-val" style="color:${aboveMa?'var(--green)':'var(--red)'}">${ma20txt}</span>
-      </div>
-      <div class="metric-cell">
-        <span class="mc-label">MA50</span>
-        <span class="mc-val" style="color:${c.ma50&&c.price>c.ma50?'var(--green)':'var(--red)'}">${ma50txt}</span>
-      </div>
-    </div>
-
-    <div class="card-signals">${signals || '<span style="font-size:9px;color:var(--dim)">Keine aktiven Signale</span>'}</div>
-
+    <div class="card-metrics">${metrics}</div>
+    <div class="card-signals">${signals||'<span style="font-size:9px;color:var(--dim)">Keine aktiven Signale</span>'}</div>
     <div class="card-price">
       <div>
         <div class="price-val">$${c.price.toFixed(2)}</div>
-        <div style="font-size:9px;color:var(--muted)">Prev: $${c.prevClose.toFixed(2)}</div>
+        <div style="font-size:9px;color:var(--muted)">Tag: ${sign}${c.changePct.toFixed(2)}%</div>
       </div>
       <div style="text-align:right">
-        <div class="price-chg ${isUp?'up':'down'}">${sign}${c.changePct.toFixed(2)}%</div>
+        <div class="price-chg ${isUp?'up':'down'}">${sign}$${Math.abs(c.price-c.prevClose).toFixed(2)}</div>
         <div style="font-size:9px;color:var(--muted)">Score: ${c.score}/100</div>
       </div>
     </div>
+    ${rrRow}
   </div>`;
 }
 
@@ -859,6 +1127,10 @@ function renderCandidates(candidates) {
   filtered.sort((a, b) => b.score - a.score);
 
   document.getElementById('countBadge').textContent = `${filtered.length} Kandidaten`;
+
+  // PDF Button einblenden wenn Kandidaten vorhanden
+  const pdfBtn = document.getElementById('btnPdf');
+  if (pdfBtn) pdfBtn.style.display = filtered.length > 0 ? 'inline-block' : 'none';
 
   if (!filtered.length) {
     grid.innerHTML = `<div class="empty-state">
@@ -960,11 +1232,13 @@ async function runScan() {
 
     allCandidates = Object.values(candidateMap);
 
-    // Update section title
-    const sbCount = allCandidates.filter(c => getRating(c.score) === 'strong-buy').length;
-    const bCount  = allCandidates.filter(c => getRating(c.score) === 'buy').length;
+    const mode     = document.getElementById('tradeMode').value;
+    const modeLabel= mode === 'day' ? '⚡ Day Trading' : '📈 Swing Trading';
+    const sbCount  = allCandidates.filter(c => getRating(c.score) === 'strong-buy').length;
+    const bCount   = allCandidates.filter(c => getRating(c.score) === 'buy').length;
+    const wCount   = allCandidates.filter(c => getRating(c.score) === 'watch').length;
     document.getElementById('sectionTitle').textContent =
-      `${sbCount} Strong Buy · ${bCount} Buy · ${allCandidates.filter(c=>getRating(c.score)==='watch').length} Watch`;
+      `${modeLabel} · ${sbCount} Strong Buy · ${bCount} Buy · ${wCount} Watch`;
     document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('de-DE');
 
     hideLoading();
@@ -1049,8 +1323,19 @@ window.addEventListener('load', () => {
   }
 
   // Button Events
-  const btnScan = document.getElementById('btnScan');
-  if (btnScan) btnScan.addEventListener('click', () => runScan());
+  const btnPdf = document.getElementById('btnPdf');
+  if (btnPdf) {
+    btnPdf.addEventListener('click', () => {
+      // PDF-Meta-Zeile befüllen
+      const now = new Date();
+      const env = document.getElementById('apiEnv').value.toUpperCase();
+      const filter = currentFilter === 'all' ? 'Alle Kandidaten' : currentFilter;
+      const vixStr = vixLevel ? `VIX ${vixLevel.toFixed(1)}` : '';
+      document.getElementById('pdfMeta').textContent =
+        `Stand: ${now.toLocaleDateString('de-DE')} ${now.toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit'})}  ·  Alpaca ${env}  ·  ${document.getElementById('sectionTitle').textContent}  ·  Filter: ${filter}  ${vixStr ? '·  ' + vixStr : ''}`;
+      window.print();
+    });
+  }
 
   const btnClear = document.getElementById('btnClear');
   if (btnClear) btnClear.addEventListener('click', () => clearKeys());
