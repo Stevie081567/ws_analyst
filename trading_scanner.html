@@ -197,9 +197,22 @@ body::before {
 /* ── CANDIDATE GRID ── */
 .candidates-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 12px;
   padding-bottom: calc(16px + var(--safe));
+}
+
+/* Desktop: max 3 Spalten */
+@media (min-width: 1024px) {
+  .candidates-grid { grid-template-columns: repeat(3, 1fr); }
+}
+/* Tablet: 2 Spalten */
+@media (min-width: 600px) and (max-width: 1023px) {
+  .candidates-grid { grid-template-columns: repeat(2, 1fr); }
+}
+/* iPhone: 1 Spalte */
+@media (max-width: 599px) {
+  .candidates-grid { grid-template-columns: 1fr; }
 }
 
 /* ── CANDIDATE CARD ── */
@@ -452,14 +465,6 @@ body::before {
 }
 .pdf-header-title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .pdf-header-meta  { font-size: 11px; color: #555; margin-top: 4px; }
-  .candidates-grid { grid-template-columns: 1fr; }
-  .card-metrics { grid-template-columns: repeat(2, 1fr); }
-  .config-bar { gap:6px; }
-  .cfg-field { min-width: 120px; }
-}
-@media (min-width: 600px) and (max-width: 1024px) {
-  .candidates-grid { grid-template-columns: repeat(2, 1fr); }
-}
 
 /* iOS safe areas */
 .app { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
