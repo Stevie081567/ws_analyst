@@ -1304,22 +1304,22 @@ if ('serviceWorker' in navigator) {
 // ═══════════════════════════════════════════════
 window.addEventListener('load', () => {
 
-  // iOS Files-Vorschau Detection
-  // In echter Files-Vorschau fehlt window.history.pushState oder navigator.standalone ist undefined
-  const isFilesPreview = !window.crypto?.subtle && !navigator.serviceWorker;
-  const isStandalone   = window.navigator.standalone === true;
-  const isSafari       = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  // iOS Files-Vorschau Detection – nur auf iOS-Geräten relevant
+  const isIOS        = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isStandalone = window.navigator.standalone === true;
+  const isSafari     = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  const isFilesPreview = isIOS && !isSafari && !isStandalone;
 
-  // Zeige PWA-Hint wenn in Safari aber noch nicht als App installiert
-  if (isSafari && !isStandalone) {
-    const hint = document.getElementById('pwaHint');
-    if (hint) hint.style.display = 'inline';
-  }
-
-  // Zeige Warnung wenn nicht in Safari/PWA
-  if (!isSafari && !isStandalone) {
+  // Warnung nur auf iOS in Files-Vorschau (nicht in Edge/Chrome auf PC)
+  if (isFilesPreview) {
     const warn = document.getElementById('iosWarning');
     if (warn) warn.style.display = 'block';
+  }
+
+  // PWA-Hint nur in Safari auf iOS wenn noch nicht installiert
+  if (isIOS && isSafari && !isStandalone) {
+    const hint = document.getElementById('pwaHint');
+    if (hint) hint.style.display = 'inline';
   }
 
   // Button Events
@@ -1354,8 +1354,8 @@ window.addEventListener('load', () => {
     for (const o of sel.options) if (o.value === cfg.env) o.selected = true;
     if (cfg.key) {
       document.getElementById('savedBadge').style.display = 'inline';
-      // Auto-scan wenn Keys gespeichert und echter Browser
-      if (isSafari || isStandalone) runScan();
+      // Auto-scan auf allen Browsern außer iOS Files-Vorschau
+      if (!isFilesPreview) runScan();
     }
   }
   document.getElementById('liveDot').style.background = 'var(--amber)';
