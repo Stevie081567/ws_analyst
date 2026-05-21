@@ -1462,6 +1462,24 @@ async function updateSectors() {
     document.getElementById('sectorList').innerHTML      = equityRows.join('');
     document.getElementById('safehavenList').innerHTML   = safehavenRows.join('');
     document.getElementById('commodityList').innerHTML   = commodityRows.join('');
+
+    // ── localStorage Bridge zum Trading Scanner ──
+    // Speichert Sektor-Performance damit Trading Scanner priorisieren kann
+    try {
+      const sectorData = sorted
+        .filter(s => !s.isSub)   // nur Hauptsektoren
+        .map(s => ({
+          sym:    s.sym,
+          name:   s.name,
+          group:  s.group,
+          pct:    parseFloat(s.pct.toFixed(3)),
+        }));
+      localStorage.setItem('ws_sector_rankings', JSON.stringify({
+        data:      sectorData,
+        timestamp: Date.now(),
+        vix:       typeof vixLevel !== 'undefined' ? vixLevel : null,
+      }));
+    } catch(e) { /* localStorage optional */ }
   } catch(e) {
     document.getElementById('sectorList').innerHTML = `<div style="font-size:11px;color:var(--accent-red)">Sector-Daten: ${e.message}</div>`;
   }

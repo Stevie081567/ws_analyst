@@ -194,6 +194,46 @@ body::before {
   padding: 2px 8px;
 }
 
+/* ── SKELETON CARDS ── */
+.skeleton-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  overflow: hidden;
+  position: relative;
+}
+.skeleton-card::before {
+  content:'';
+  position:absolute;
+  top:0;left:0;right:0;
+  height:3px;
+  background: var(--border);
+  border-radius:8px 8px 0 0;
+}
+.skel {
+  background: linear-gradient(90deg, var(--surface2) 25%, var(--border) 50%, var(--surface2) 75%);
+  background-size: 200% 100%;
+  animation: skelShimmer 1.4s ease-in-out infinite;
+  border-radius: 4px;
+}
+@keyframes skelShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skel-title  { height: 20px; width: 55%; margin-bottom: 8px; }
+.skel-sub    { height: 10px; width: 40%; margin-bottom: 16px; }
+.skel-ring   { width: 52px; height: 52px; border-radius: 50%; flex-shrink:0; }
+.skel-row    { height: 10px; margin-bottom: 6px; }
+.skel-bar    { height: 4px; width: 100%; margin-top: 8px; }
+.skel-price  { height: 18px; width: 45%; margin-top: 10px; }
+.skel-badge  { height: 16px; width: 70px; border-radius: 3px; display:inline-block; margin-right:4px; }
+
+/* Column count als CSS variable – wird per JS beim Start gesetzt */
+.candidates-grid {
+  --cols: 3;
+}
+
 /* ── CANDIDATE GRID ── */
 .candidates-grid {
   display: grid;
@@ -201,16 +241,12 @@ body::before {
   gap: 12px;
   padding-bottom: calc(16px + var(--safe));
 }
-
-/* Desktop: max 3 Spalten */
 @media (min-width: 1024px) {
   .candidates-grid { grid-template-columns: repeat(3, 1fr); }
 }
-/* Tablet: 2 Spalten */
 @media (min-width: 600px) and (max-width: 1023px) {
   .candidates-grid { grid-template-columns: repeat(2, 1fr); }
 }
-/* iPhone: 1 Spalte */
 @media (max-width: 599px) {
   .candidates-grid { grid-template-columns: 1fr; }
 }
@@ -473,10 +509,7 @@ body::before {
 </head>
 <body>
 
-<div class="loading-overlay hidden" id="loadingOverlay">
-  <div class="spinner"></div>
-  <div class="loading-text" id="loadingText">Screening läuft...</div>
-</div>
+<div id="loadingOverlay" class="hidden" style="display:none"></div>
 
 <div class="app">
 
@@ -546,6 +579,41 @@ body::before {
     </span>
   </div>
 
+  <!-- SENTIMENT BRIDGE / SEKTOR FILTER -->
+  <div id="sectorBridgePanel" style="margin-bottom:10px">
+
+    <!-- A: Bridge aktiv – Daten vom Sentiment Dashboard -->
+    <div id="bridgeActive" style="display:none;background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.2);border-radius:6px;padding:10px 14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s ease-in-out infinite"></div>
+          <span style="font-size:10px;color:var(--green);font-weight:600;letter-spacing:0.05em">SENTIMENT BRIDGE AKTIV</span>
+          <span style="font-size:9px;color:var(--muted)" id="bridgeTimestamp"></span>
+        </div>
+        <button id="btnBridgeToggle" style="font-size:9px;color:var(--muted);background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 8px;cursor:pointer">
+          Alle Sektoren anzeigen
+        </button>
+      </div>
+      <!-- Top-Sektoren aus Sentiment Dashboard -->
+      <div id="bridgeSectorChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px"></div>
+    </div>
+
+    <!-- B: Fallback – manuelle Sektor-Checkboxen -->
+    <div id="bridgeFallback" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:9px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase">
+          Sektor-Filter <span style="color:var(--dim)">(kein Sentiment Dashboard verbunden)</span>
+        </span>
+        <div style="display:flex;gap:6px">
+          <button id="btnSelectAll" style="font-size:9px;color:var(--green);background:transparent;border:1px solid rgba(0,255,136,0.3);border-radius:3px;padding:2px 8px;cursor:pointer">Alle</button>
+          <button id="btnSelectNone" style="font-size:9px;color:var(--muted);background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 8px;cursor:pointer">Keine</button>
+        </div>
+      </div>
+      <div id="sectorCheckboxes" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+    </div>
+
+  </div>
+
   <!-- FILTER CHIPS -->
   <div class="filter-bar">
     <span class="filter-label">Filter:</span>
@@ -581,12 +649,23 @@ body::before {
 
   <!-- RESULTS HEADER -->
   <div class="section-hdr">
-    <span class="section-title" id="sectionTitle">Kandidaten werden geladen...</span>
+    <span class="section-title" id="sectionTitle">Bereit zum Scannen</span>
     <div style="display:flex;align-items:center;gap:8px">
-      <span class="count-badge" id="countBadge">0 Kandidaten</span>
+      <span class="count-badge" id="countBadge">-- Kandidaten</span>
       <button id="btnPdf" class="btn-scan" style="font-size:10px;padding:5px 12px;background:transparent;border:1px solid var(--border);color:var(--muted);display:none">
         ⬇ PDF
       </button>
+    </div>
+  </div>
+
+  <!-- INLINE FORTSCHRITTSANZEIGE -->
+  <div id="scanProgress" style="display:none;margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-bottom:4px">
+      <span id="progressText">Verbinde...</span>
+      <span id="progressPct">0%</span>
+    </div>
+    <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden">
+      <div id="progressBar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--green),var(--blue));border-radius:2px;transition:width 0.3s ease"></div>
     </div>
   </div>
 
@@ -954,8 +1033,8 @@ function scoreDay(sym, bars, spyBars) {
   };
 }
 
-function scoreCandidate(sym, bars, spyBars) {
-  const mode = document.getElementById('tradeMode')?.value || 'swing';
+function scoreCandidate(sym, bars, spyBars, mode) {
+  mode = mode || 'swing';
   return mode === 'day' ? scoreDay(sym, bars, spyBars) : scoreSwing(sym, bars, spyBars);
 }
 
@@ -995,7 +1074,7 @@ function fmtDV(dv) {
   return `$${(dv/1e3).toFixed(0)}K`;
 }
 
-function renderCard(c, sectorName) {
+function renderCard(c, sectorName, rank) {
   const rating = getRating(c.score);
   if (!rating) return '';
 
@@ -1076,7 +1155,8 @@ function renderCard(c, sectorName) {
 
   return `
   <div class="cand-card ${rating}" data-rating="${rating}" data-signals="${[c.momSignal?'momentum':'',c.volSignal?'volume':'',c.trendSignal?'trend':''].filter(Boolean).join(',')}">
-    <div style="position:absolute;top:8px;right:8px;font-size:8px;letter-spacing:0.1em;color:var(--dim)">${isDay?'DAY':'SWING'}</div>
+    <div style="position:absolute;top:8px;left:10px;font-size:8px;font-weight:700;color:var(--dim);letter-spacing:0.05em">#${rank}</div>
+    <div style="position:absolute;top:8px;right:10px;font-size:8px;letter-spacing:0.1em;color:var(--dim)">${isDay?'DAY':'SWING'}</div>
     <div class="card-top">
       <div>
         <div class="card-sym" style="color:${color}">${c.sym}</div>
@@ -1128,12 +1208,17 @@ function renderCandidates(candidates) {
     return true;
   });
 
-  // Sort by score desc
-  filtered.sort((a, b) => b.score - a.score);
+  // Sortierung: erst nach Rating-Gruppe, dann Score absteigend
+  const ratingOrder = { 'strong-buy': 0, 'buy': 1, 'watch': 2 };
+  filtered.sort((a, b) => {
+    const ra = ratingOrder[getRating(a.score)] ?? 9;
+    const rb = ratingOrder[getRating(b.score)] ?? 9;
+    if (ra !== rb) return ra - rb;   // Rating-Gruppe zuerst
+    return b.score - a.score;        // dann Score absteigend
+  });
 
   document.getElementById('countBadge').textContent = `${filtered.length} Kandidaten`;
 
-  // PDF Button einblenden wenn Kandidaten vorhanden
   const pdfBtn = document.getElementById('btnPdf');
   if (pdfBtn) pdfBtn.style.display = filtered.length > 0 ? 'inline-block' : 'none';
 
@@ -1145,7 +1230,8 @@ function renderCandidates(candidates) {
     return;
   }
 
-  grid.innerHTML = filtered.map(c => renderCard(c, c.sectorName)).join('');
+  // Rank-Nummer übergeben für Anzeige auf der Karte
+  grid.innerHTML = filtered.map((c, i) => renderCard(c, c.sectorName, i + 1)).join('');
 }
 
 // ═══════════════════════════════════════════════
@@ -1160,13 +1246,233 @@ function setFilter(f) {
 }
 
 // ═══════════════════════════════════════════════
-// MAIN SCAN
+// SENTIMENT BRIDGE – liest Sektor-Rankings vom
+// Market Sentiment Dashboard via localStorage
 // ═══════════════════════════════════════════════
+const BRIDGE_KEY     = 'ws_sector_rankings';
+const BRIDGE_MAX_AGE = 4 * 60 * 60 * 1000; // 4 Stunden gültig
+
+let bridgeData      = null;   // Sektor-Rankings vom Sentiment Dashboard
+let bridgeActive    = false;  // true wenn Bridge-Daten vorhanden und frisch
+let activeSectors   = null;   // Set von Sektor-Syms die gescannt werden sollen (null = alle)
+
+// ETF-Symbol → SECTOR_UNIVERSE Key Mapping
+const ETF_TO_UNIVERSE = {
+  'XLK': 'Tech (XLK)', 'SOXX': 'Semis (SOXX)', 'ROBO': 'Robotik (ROBO)',
+  'XLF': 'Finance (XLF)', 'XLE': 'Energie (XLE)', 'XOP': 'Öl&Gas (XOP)',
+  'ICLN': 'Renewables (ICLN)', 'XLV': 'Health (XLV)', 'XLI': 'Industrie (XLI)',
+  'XLC': 'Konsum Cyc (XLY)', 'XLY': 'Konsum Cyc (XLY)', 'XLP': 'Konsum Sta (XLP)',
+  'JETS': 'Travel (JETS)', 'ITA': 'Defense (ITA)',
+  'GLD': 'Gold & Rohst.(GLD)', 'LIT': 'Lithium (LIT)',
+};
+
+function loadBridge() {
+  try {
+    const raw = localStorage.getItem(BRIDGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    const age    = Date.now() - (parsed.timestamp || 0);
+    if (age > BRIDGE_MAX_AGE) return false; // zu alt
+    bridgeData = parsed;
+    return true;
+  } catch(e) { return false; }
+}
+
+function initBridgeUI() {
+  const hasBridge = loadBridge();
+
+  if (hasBridge && bridgeData?.data?.length) {
+    // ── BRIDGE AKTIV ──
+    bridgeActive = true;
+    document.getElementById('bridgeActive').style.display   = 'block';
+    document.getElementById('bridgeFallback').style.display = 'none';
+
+    // Timestamp
+    const age = Math.round((Date.now() - bridgeData.timestamp) / 60000);
+    document.getElementById('bridgeTimestamp').textContent =
+      `· Stand: vor ${age < 1 ? '<1' : age} Min`;
+
+    // Sektor-Chips sortiert nach Performance
+    const sectors = [...bridgeData.data].sort((a, b) => b.pct - a.pct);
+    const chips   = document.getElementById('bridgeSectorChips');
+    chips.innerHTML = sectors.map(s => {
+      const isPos   = s.pct >= 0;
+      const color   = Math.abs(s.pct) >= 1.2 ? (isPos ? '#00ff88' : '#ff3358')
+                    : Math.abs(s.pct) >= 0.5  ? (isPos ? '#7dde4a' : '#ff9640')
+                    : 'var(--muted)';
+      const sign    = isPos ? '+' : '';
+      const active  = s.pct > 0; // nur positive Sektoren vorselektiert
+      return `<div class="chip sector-chip ${active ? 'active' : ''}"
+                   data-sym="${s.sym}"
+                   data-pct="${s.pct}"
+                   style="display:flex;align-items:center;gap:5px;${active?'border-color:'+color+';background:'+color+'18;color:'+color:''}">
+        <span>${s.name}</span>
+        <span style="font-size:8px;color:${color};font-weight:600">${sign}${s.pct.toFixed(2)}%</span>
+      </div>`;
+    }).join('');
+
+    // Aktive Sektoren aus Bridge-Daten
+    updateActiveSectors();
+
+    // Toggle: alle Sektoren anzeigen
+    document.getElementById('btnBridgeToggle')?.addEventListener('click', () => {
+      const allActive = chips.querySelectorAll('.sector-chip.active').length === sectors.length;
+      chips.querySelectorAll('.sector-chip').forEach(c => {
+        if (allActive) {
+          // nichts ändern
+        } else {
+          c.classList.add('active');
+          c.style.borderColor = 'var(--green)';
+          c.style.background  = 'rgba(0,255,136,0.1)';
+          c.style.color       = 'var(--green)';
+        }
+      });
+      updateActiveSectors();
+    });
+
+    // Chip-Klick
+    chips.addEventListener('click', e => {
+      const chip = e.target.closest('.sector-chip');
+      if (!chip) return;
+      chip.classList.toggle('active');
+      const pct   = parseFloat(chip.dataset.pct);
+      const isPos = pct >= 0;
+      const color = Math.abs(pct) >= 1.2 ? (isPos ? '#00ff88' : '#ff3358')
+                  : Math.abs(pct) >= 0.5  ? (isPos ? '#7dde4a' : '#ff9640')
+                  : 'var(--muted)';
+      if (chip.classList.contains('active')) {
+        chip.style.borderColor = color;
+        chip.style.background  = color + '18';
+        chip.style.color       = color;
+      } else {
+        chip.style.borderColor = 'var(--border)';
+        chip.style.background  = 'transparent';
+        chip.style.color       = 'var(--muted)';
+      }
+      updateActiveSectors();
+    });
+
+  } else {
+    // ── FALLBACK: Sektor-Checkboxen ──
+    bridgeActive = false;
+    document.getElementById('bridgeActive').style.display   = 'none';
+    document.getElementById('bridgeFallback').style.display = 'block';
+
+    const container = document.getElementById('sectorCheckboxes');
+    container.innerHTML = Object.keys(SECTOR_UNIVERSE).map(sector => {
+      const etfSym = Object.entries(ETF_TO_UNIVERSE).find(([,v]) => v === sector)?.[0] || '';
+      return `<div class="chip sector-cb active" data-sector="${sector}"
+                   style="border-color:rgba(0,255,136,0.3);background:rgba(0,255,136,0.07);color:var(--green)">
+        ${sector.split('(')[0].trim()}
+      </div>`;
+    }).join('');
+
+    // Alle / Keine Buttons
+    document.getElementById('btnSelectAll')?.addEventListener('click', () => {
+      container.querySelectorAll('.sector-cb').forEach(c => {
+        c.classList.add('active');
+        c.style.borderColor = 'rgba(0,255,136,0.3)';
+        c.style.background  = 'rgba(0,255,136,0.07)';
+        c.style.color       = 'var(--green)';
+      });
+      activeSectors = null; // alle
+    });
+    document.getElementById('btnSelectNone')?.addEventListener('click', () => {
+      container.querySelectorAll('.sector-cb').forEach(c => {
+        c.classList.remove('active');
+        c.style.borderColor = 'var(--border)';
+        c.style.background  = 'transparent';
+        c.style.color       = 'var(--muted)';
+      });
+      activeSectors = new Set();
+    });
+
+    // Chip-Klick
+    container.addEventListener('click', e => {
+      const chip = e.target.closest('.sector-cb');
+      if (!chip) return;
+      chip.classList.toggle('active');
+      if (chip.classList.contains('active')) {
+        chip.style.borderColor = 'rgba(0,255,136,0.3)';
+        chip.style.background  = 'rgba(0,255,136,0.07)';
+        chip.style.color       = 'var(--green)';
+      } else {
+        chip.style.borderColor = 'var(--border)';
+        chip.style.background  = 'transparent';
+        chip.style.color       = 'var(--muted)';
+      }
+      updateActiveSectors();
+    });
+
+    updateActiveSectors();
+  }
+}
+
+function updateActiveSectors() {
+  if (bridgeActive) {
+    // Aus Bridge-Chips
+    const active = new Set();
+    document.querySelectorAll('.sector-chip.active').forEach(chip => {
+      const sym = chip.dataset.sym;
+      const key = ETF_TO_UNIVERSE[sym];
+      if (key) active.add(key);
+    });
+    activeSectors = active.size > 0 ? active : null;
+  } else {
+    // Aus Fallback-Checkboxen
+    const active = new Set();
+    document.querySelectorAll('.sector-cb.active').forEach(chip => {
+      active.add(chip.dataset.sector);
+    });
+    activeSectors = active.size === Object.keys(SECTOR_UNIVERSE).length ? null : active;
+  }
+  // Bei Änderung sofort neu scoren wenn Daten vorhanden
+  if (Object.keys(cachedBars).length > 0) rescoreAndRender();
+}
+let cachedBars = {};
+let cachedSectorSymbols = {};
+let cachedTopN = 0;
+
+// Nur neu scoren + rendern ohne API-Call (für Modus/Filter-Wechsel)
+function rescoreAndRender() {
+  if (!cachedBars || Object.keys(cachedBars).length === 0) return; // noch kein Scan
+  const mode     = document.getElementById('tradeMode').value;
+  const spyBars  = cachedBars['SPY'] || [];
+  const candidateMap = {};
+
+  for (const [sector, syms] of Object.entries(cachedSectorSymbols)) {
+    for (const sym of syms) {
+      const bars   = cachedBars[sym];
+      const result = scoreCandidate(sym, bars, spyBars, mode);
+      if (!result) continue;
+      result.sectorName = sector;
+      if (!candidateMap[sym] || result.score > candidateMap[sym].score) {
+        candidateMap[sym] = result;
+      }
+    }
+  }
+
+  allCandidates = Object.values(candidateMap);
+  updateSectionTitle();
+  renderCandidates(allCandidates);
+}
+
+function updateSectionTitle() {
+  const mode      = document.getElementById('tradeMode').value;
+  const modeLabel = mode === 'day' ? '⚡ Day Trading' : '📈 Swing Trading';
+  const sbCount   = allCandidates.filter(c => getRating(c.score) === 'strong-buy').length;
+  const bCount    = allCandidates.filter(c => getRating(c.score) === 'buy').length;
+  const wCount    = allCandidates.filter(c => getRating(c.score) === 'watch').length;
+  document.getElementById('sectionTitle').textContent =
+    `${modeLabel} · ${sbCount} Strong Buy · ${bCount} Buy · ${wCount} Watch`;
+}
+
 async function runScan() {
   ALPACA_KEY    = document.getElementById('apiKey').value.trim();
   ALPACA_SECRET = document.getElementById('apiSecret').value.trim();
   const env     = document.getElementById('apiEnv').value;
   const topN    = parseInt(document.getElementById('topN').value);
+  const mode    = document.getElementById('tradeMode').value;
   DATA_BASE     = 'https://data.alpaca.markets';
 
   if (!ALPACA_KEY || !ALPACA_SECRET) {
@@ -1176,9 +1482,14 @@ async function runScan() {
 
   showLoading('Verbinde mit Alpaca...');
 
+  // Sofort Skeletons zeigen – Anzahl basiert auf Top N × Sektoren (geschätzt)
+  const estimatedCount = Math.min(topN * Object.keys(SECTOR_UNIVERSE).length, 30);
+  renderSkeletons(estimatedCount);
+
   try {
     // Test connection
     const baseUrl = env === 'live' ? 'https://api.alpaca.markets' : 'https://paper-api.alpaca.markets';
+    setProgress(10, 'Verbinde mit Alpaca...');
     const testRes = await fetch(`${baseUrl}/v2/account`, {
       headers: { 'APCA-API-KEY-ID': ALPACA_KEY, 'APCA-API-SECRET-KEY': ALPACA_SECRET }
     });
@@ -1188,65 +1499,71 @@ async function runScan() {
     document.getElementById('connDot').style.background = 'var(--green)';
     document.getElementById('connStatus').textContent = `Verbunden · Alpaca ${env.toUpperCase()}`;
 
-    // Fetch VIX
-    setLoadingText('VIX laden...');
-    vixLevel = await fetchVIX();
+    // Symbole aufbauen – gefiltert nach aktivem Sektor-Set
+    setProgress(15, 'Symbole aufbauen...');
+    const allSymbols = new Set(['SPY']);
+    cachedSectorSymbols = {};
+    for (const [sector, holdings] of Object.entries(SECTOR_UNIVERSE)) {
+      // Überspringe Sektoren die nicht aktiv sind
+      if (activeSectors && !activeSectors.has(sector)) continue;
+      const syms = holdings.slice(0, topN);
+      cachedSectorSymbols[sector] = syms;
+      syms.forEach(s => allSymbols.add(s));
+    }
+    cachedTopN = topN;
+
+    const symArr      = [...allSymbols];
+    const totalSyms   = symArr.length;
+    cachedBars        = {};
+
+    const firstBatch  = symArr.slice(0, 50);
+    const restBatches = [];
+    for (let i = 50; i < symArr.length; i += 50) restBatches.push(symArr.slice(i, i + 50));
+
+    // Erster Batch + VIX parallel
+    setProgress(20, `Lade VIX + Kursdaten (${totalSyms} Symbole)...`);
+    const [firstBarsResult, vixResult] = await Promise.all([
+      getDailyBars(firstBatch, 60),
+      fetchVIX(),
+    ]);
+    Object.assign(cachedBars, firstBarsResult);
+    vixLevel = vixResult;
     document.getElementById('vixFilterStatus').textContent = vixLevel
       ? `${vixLevel.toFixed(1)} ${vixLevel > 25 ? '⚠ ERHÖHT' : '✓ OK'}`
       : '--';
 
-    // Collect all unique symbols (top N per sector)
-    const allSymbols = new Set(['SPY']); // SPY for RS calculation
-    const sectorSymbols = {};
-    for (const [sector, holdings] of Object.entries(SECTOR_UNIVERSE)) {
-      const syms = holdings.slice(0, topN);
-      sectorSymbols[sector] = syms;
-      syms.forEach(s => allSymbols.add(s));
+    // Restliche Batches mit Fortschritt
+    const baseProgress = 20;
+    const dataProgress = 60;
+    for (let i = 0; i < restBatches.length; i++) {
+      const pct = baseProgress + dataProgress * ((i + 1) / (restBatches.length + 1));
+      setProgress(pct, `Kursdaten Batch ${i + 2} / ${restBatches.length + 1}...`);
+      const bars = await getDailyBars(restBatches[i], 60);
+      Object.assign(cachedBars, bars);
     }
 
-    // Fetch all bars in batches of 50 (API limit)
-    setLoadingText(`Hole Kursdaten für ${allSymbols.size} Symbole...`);
-    const symArr = [...allSymbols];
-    const allBars = {};
+    // Scoring
+    setProgress(88, 'Berechne Scores...');
+    const spyBars      = cachedBars['SPY'] || [];
+    const candidateMap = {};
 
-    for (let i = 0; i < symArr.length; i += 50) {
-      const batch = symArr.slice(i, i + 50);
-      setLoadingText(`Kursdaten ${i+1}–${Math.min(i+50, symArr.length)} von ${symArr.length}...`);
-      const bars = await getDailyBars(batch, 60); // 60 days for MA50
-      Object.assign(allBars, bars);
-    }
-
-    const spyBars = allBars['SPY'] || [];
-
-    // Score all candidates – dedupliziert: gleicher Ticker nur einmal (höchster Score gewinnt)
-    setLoadingText('Berechne Composite Scores...');
-    const candidateMap = {}; // sym → beste Kandidat-Instanz
-
-    for (const [sector, syms] of Object.entries(sectorSymbols)) {
+    for (const [sector, syms] of Object.entries(cachedSectorSymbols)) {
       for (const sym of syms) {
-        const bars = allBars[sym];
-        const result = scoreCandidate(sym, bars, spyBars);
+        const bars   = cachedBars[sym];
+        const result = scoreCandidate(sym, bars, spyBars, mode);
         if (!result) continue;
         result.sectorName = sector;
-        // Duplikat: nur behalten wenn Score höher als bisher gespeicherter
         if (!candidateMap[sym] || result.score > candidateMap[sym].score) {
           candidateMap[sym] = result;
         }
       }
     }
 
+    setProgress(98, 'Rendern...');
     allCandidates = Object.values(candidateMap);
-
-    const mode     = document.getElementById('tradeMode').value;
-    const modeLabel= mode === 'day' ? '⚡ Day Trading' : '📈 Swing Trading';
-    const sbCount  = allCandidates.filter(c => getRating(c.score) === 'strong-buy').length;
-    const bCount   = allCandidates.filter(c => getRating(c.score) === 'buy').length;
-    const wCount   = allCandidates.filter(c => getRating(c.score) === 'watch').length;
-    document.getElementById('sectionTitle').textContent =
-      `${modeLabel} · ${sbCount} Strong Buy · ${bCount} Buy · ${wCount} Watch`;
     document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('de-DE');
-
-    hideLoading();
+    updateSectionTitle();
+    hideProgress();
     renderCandidates(allCandidates);
 
   } catch(e) {
@@ -1262,18 +1579,63 @@ async function runScan() {
 }
 
 // ═══════════════════════════════════════════════
-// LOADING
+// SKELETON & PROGRESS
 // ═══════════════════════════════════════════════
-function showLoading(msg) {
-  document.getElementById('loadingOverlay').classList.remove('hidden');
-  document.getElementById('loadingText').textContent = msg;
+function getColumnCount() {
+  const w = window.innerWidth;
+  if (w >= 1024) return 3;
+  if (w >= 600)  return 2;
+  return 1;
 }
-function setLoadingText(msg) {
-  document.getElementById('loadingText').textContent = msg;
+
+function renderSkeletons(count) {
+  const cols  = getColumnCount();
+  // Zeige ein Vielfaches der Spalten als Skeletons
+  const n     = Math.ceil(count / cols) * cols;
+  const grid  = document.getElementById('candidatesGrid');
+  grid.innerHTML = Array.from({length: n}, () => `
+    <div class="skeleton-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+        <div>
+          <div class="skel skel-title"></div>
+          <div class="skel skel-sub"></div>
+        </div>
+        <div class="skel skel-ring"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">
+        ${Array.from({length:4}, () => `<div><div class="skel" style="height:8px;margin-bottom:4px"></div><div class="skel" style="height:14px;width:70%"></div></div>`).join('')}
+      </div>
+      <div style="display:flex;gap:4px;margin-bottom:8px">
+        <div class="skel skel-badge"></div>
+        <div class="skel skel-badge" style="width:55px"></div>
+      </div>
+      <div class="skel skel-bar"></div>
+      <div class="skel skel-price"></div>
+    </div>
+  `).join('');
 }
-function hideLoading() {
-  document.getElementById('loadingOverlay').classList.add('hidden');
+
+function setProgress(pct, text) {
+  const bar  = document.getElementById('scanProgress');
+  const pb   = document.getElementById('progressBar');
+  const pt   = document.getElementById('progressText');
+  const pp   = document.getElementById('progressPct');
+  if (bar) bar.style.display = 'block';
+  if (pb)  pb.style.width    = pct + '%';
+  if (pt)  pt.textContent    = text;
+  if (pp)  pp.textContent    = Math.round(pct) + '%';
+  document.getElementById('sectionTitle').textContent = text;
 }
+
+function hideProgress() {
+  const bar = document.getElementById('scanProgress');
+  if (bar) bar.style.display = 'none';
+}
+
+// Legacy stubs – nicht mehr als fullscreen overlay
+function showLoading(msg) { setProgress(5, msg); }
+function setLoadingText(msg) { /* progress bar übernimmt */ }
+function hideLoading() { hideProgress(); }
 
 // ═══════════════════════════════════════════════
 // PWA SERVICE WORKER
@@ -1345,10 +1707,28 @@ window.addEventListener('load', () => {
   const btnClear = document.getElementById('btnClear');
   if (btnClear) btnClear.addEventListener('click', () => clearKeys());
 
+  // Modus-Wechsel → sofort neu scoren (kein API-Call nötig)
+  const modeSelect = document.getElementById('tradeMode');
+  if (modeSelect) modeSelect.addEventListener('change', () => rescoreAndRender());
+
+  // Top N Wechsel → neuer vollständiger Scan (andere Symbole)
+  const topNSelect = document.getElementById('topN');
+  if (topNSelect) topNSelect.addEventListener('change', () => {
+    const newN = parseInt(topNSelect.value);
+    if (newN !== cachedTopN && ALPACA_KEY && ALPACA_SECRET) {
+      runScan(); // Neue Symbole → API-Call nötig
+    } else {
+      rescoreAndRender();
+    }
+  });
+
   // Filter Chips
   document.querySelectorAll('.chip').forEach(chip => {
     chip.addEventListener('click', () => setFilter(chip.dataset.filter));
   });
+
+  // Sentiment Bridge initialisieren (liest localStorage vom Sentiment Dashboard)
+  initBridgeUI();
 
   // Config aus localStorage laden
   const cfg = loadConfig();
