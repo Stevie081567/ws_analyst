@@ -1006,7 +1006,11 @@
     <div class="sector-panel" style="padding:16px">
       <div class="panel-header" style="margin-bottom:10px">
         <span class="panel-title">🛡 Safe Haven</span>
-        <span class="source-tag">Anleihen · Edelmetalle</span>
+        <span class="source-tag">Anleihen · Edelmetalle · PGM</span>
+      </div>
+      <!-- T-Bond Yield Panel (Yahoo Finance) -->
+      <div id="yieldPanel" style="margin-bottom:12px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px">
+        <span style="font-size:10px;color:var(--text-dim)">Yields werden geladen...</span>
       </div>
       <div class="sector-list" id="safehavenList" style="gap:4px">
         <div style="font-size:10px;color:var(--text-dim)">Verbinden...</div>
@@ -1093,13 +1097,17 @@ const SECTOR_ETFS = [
   {sym:'XLU',  name:'Utilities',   sub: false,  parent: null,  group: 'equity'},
   {sym:'XLRE', name:'Real Est.',   sub: false,  parent: null,  group: 'equity'},
 
-  // ── SAFE HAVEN: Anleihen ──
+  // ── SAFE HAVEN: Anleihen (ETF als Kursindikator) ──
   {sym:'TLT',  name:'Long Bonds',  sub: false,  parent: null,  group: 'safehaven'},
   {sym:'BIL',  name:'T-Bills',     sub: true,   parent: 'TLT', group: 'safehaven'},
+  // T-Bond Yields als Yahoo-Indices (^IRX, ^FVX, ^TNX, ^TYX)
+  // werden separat via fetchYields() geladen, nicht über Alpaca
   // ── SAFE HAVEN: Edelmetalle ──
-  {sym:'GLD',  name:'Gold',        sub: false,  parent: null,  group: 'safehaven'},
+  {sym:'GLD',  name:'Gold ETF',    sub: false,  parent: null,  group: 'safehaven'},
   {sym:'SLV',  name:'Silber',      sub: true,   parent: 'GLD', group: 'safehaven'},
   {sym:'GDX',  name:'Gold Miners', sub: true,   parent: 'GLD', group: 'safehaven'},
+  {sym:'PHYS', name:'Phys.Gold',   sub: true,   parent: 'GLD', group: 'safehaven'},
+  // ── SAFE HAVEN: Platingruppenmetalle (PGM) ──
   {sym:'PPLT', name:'Platin',      sub: false,  parent: null,  group: 'safehaven'},
   {sym:'PALL', name:'Palladium',   sub: true,   parent: 'PPLT',group: 'safehaven'},
 
@@ -1354,6 +1362,7 @@ async function updateSectors() {
       GLD:  '#ffd700',
       SLV:  '#c0c0c0',
       GDX:  '#e8b84b',
+      PHYS: '#ffec80',   // helles Gold für physisches Produkt
       PPLT: '#e5e4e2',
       PALL: '#cec8b0',
       // Rohstoffe: Industriemetalle
@@ -1377,7 +1386,8 @@ async function updateSectors() {
 
     // Gruppenheader-Logik: Safe Haven zweigeteilt (Anleihen vs. Edelmetalle)
     const safehavenAnleihenSyms = new Set(['TLT','BIL']);
-    const safehavenEdelSyms     = new Set(['GLD','SLV','GDX','PPLT','PALL']);
+    const safehavenEdelSyms     = new Set(['GLD','SLV','GDX','PHYS']);
+    const safehavenPGMSyms      = new Set(['PPLT','PALL']);
     const commodityIndustrieSyms= new Set(['COPX','FCX','SCCO','TECK']);
     const commodityBatterieSyms = new Set(['LIT','ALB','LTHM']);
     const commodityBasisSyms    = new Set(['PDBC']);
@@ -1409,6 +1419,7 @@ async function updateSectors() {
         if (s.group === 'safehaven') {
           if (safehavenAnleihenSyms.has(s.sym)) { subKey = 'sh-bond'; subLabel = '📋 ANLEIHEN'; }
           else if (safehavenEdelSyms.has(s.sym)) { subKey = 'sh-edel'; subLabel = '✨ EDELMETALLE'; }
+          else if (safehavenPGMSyms.has(s.sym))  { subKey = 'sh-pgm';  subLabel = '⬡ PLATINGRUPPENMETALLE (PGM)'; }
         } else if (s.group === 'commodity') {
           if (commodityIndustrieSyms.has(s.sym)) { subKey = 'co-ind'; subLabel = '🔩 INDUSTRIEMETALLE'; }
           else if (commodityBatterieSyms.has(s.sym)) { subKey = 'co-bat'; subLabel = '⚡ BATTERIEMETALLE'; }
@@ -1636,8 +1647,87 @@ async function fetchSpotPrice(yahooSymbol) {
 }
 
 // ============================
-// MAIN SENTIMENT UPDATE
+// T-BOND YIELDS via Yahoo Finance (^IRX, ^FVX, ^TNX, ^TYX)
+// Yield steigt = Bearish / Rezessionsrisiko
 // ============================
+const TBOND_INDICES = [
+  { sym: '^IRX', name: '3M',  label: '3-Monat' },
+  { sym: '^FVX', name: '5Y',  label: '5-Jahr'  },
+  { sym: '^TNX', name: '10Y', label: '10-Jahr' },
+  { sym: '^TYX', name: '30Y', label: '30-Jahr' },
+];
+
+async function fetchAllYields() {
+  const results = await Promise.allSettled(
+    TBOND_INDICES.map(async t => {
+      const data = await fetchSpotPrice(encodeURIComponent(t.sym));
+      return { ...t, ...data };
+    })
+  );
+  return results
+    .filter(r => r.status === 'fulfilled')
+    .map(r => r.value);
+}
+
+async function updateYieldPanel() {
+  try {
+    const yields = await fetchAllYields();
+    if (!yields.length) return;
+
+    const container = document.getElementById('yieldPanel');
+    if (!container) return;
+
+    const rows = yields.map(y => {
+      const pct     = y.current;           // Yield in % (z.B. 4.85)
+      const chg     = y.changePct;         // Änderung des Yields in %
+      const isRising= chg > 0;
+
+      // Yield steigt = bearisch (Anleihepreise fallen)
+      // Yield fällt  = bullisch für Anleihen (Risk-Off)
+      const signalColor = pct > 5.0  ? '#ff1a44'   // >5% = extreme Warnung
+                        : pct > 4.5  ? '#ff6b35'   // erhöht
+                        : pct > 4.0  ? '#ffb800'   // moderat erhöht
+                        : pct > 3.0  ? '#7dde4a'   // normal
+                        :              '#00ff88';   // tief = bullisch
+
+      const chgColor  = isRising ? '#ff6b35' : '#00ff88'; // steigt=orange, fällt=grün
+      const chgSign   = isRising ? '▲' : '▼';
+      const yieldWarn = pct > 5.0 ? `<span style="font-size:8px;color:#ff1a44;font-weight:700;margin-left:4px">⚠ >5%</span>` : '';
+
+      return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+        <span style="font-size:9px;color:var(--text-muted);width:28px;flex-shrink:0;letter-spacing:0.05em">${y.name}</span>
+        <div style="flex:1;height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+          <div style="width:${Math.min(100, pct * 16)}%;height:100%;background:${signalColor};border-radius:3px;transition:width 0.5s"></div>
+        </div>
+        <span style="font-size:11px;font-weight:600;color:${signalColor};width:42px;text-align:right">${pct.toFixed(2)}%</span>
+        <span style="font-size:10px;color:${chgColor};width:52px;text-align:right">${chgSign}${Math.abs(chg).toFixed(2)}%${yieldWarn}</span>
+      </div>`;
+    }).join('');
+
+    // Yield Kurve Signal
+    const y10 = yields.find(y => y.name === '10Y');
+    const y2  = yields.find(y => y.name === '5Y'); // 5Y als Proxy für 2Y
+    const y30 = yields.find(y => y.name === '30Y');
+    let curveSignal = '';
+    if (y10 && y2) {
+      const spread = y10.current - y2.current;
+      if      (spread < -0.5) curveSignal = `<div style="margin-top:8px;font-size:10px;color:#ff3358;background:rgba(255,51,88,0.08);border-radius:3px;padding:5px 8px">⚠ Invertierte Kurve: 10Y&lt;5Y (${spread.toFixed(2)}%) → Rezessionsindikator</div>`;
+      else if (spread < 0)    curveSignal = `<div style="margin-top:8px;font-size:10px;color:#ff9640;background:rgba(255,150,64,0.08);border-radius:3px;padding:5px 8px">⚡ Kurve leicht invertiert (${spread.toFixed(2)}%) → Vorsicht</div>`;
+      else if (spread > 1.5)  curveSignal = `<div style="margin-top:8px;font-size:10px;color:#00ff88;background:rgba(0,255,136,0.08);border-radius:3px;padding:5px 8px">✓ Steile Kurve (${spread.toFixed(2)}%) → Normales Umfeld</div>`;
+    }
+    if (y30 && y30.current > 5.0) {
+      curveSignal += `<div style="margin-top:4px;font-size:10px;color:#ff1a44;background:rgba(255,26,68,0.08);border-radius:3px;padding:5px 8px">🔴 30Y Yield >5%! Historisch bearish für Aktien &amp; Real Estate</div>`;
+    }
+
+    container.innerHTML = `
+      <div style="font-size:8px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">📋 T-BOND YIELDS (CBOE)</div>
+      ${rows}
+      ${curveSignal}`;
+  } catch(e) {
+    const c = document.getElementById('yieldPanel');
+    if (c) c.innerHTML = `<span style="font-size:10px;color:var(--accent-red)">Yields: ${e.message}</span>`;
+  }
+}
 async function updateSentimentMetrics() {
   try {
     // Ein einziger API-Call für alle Symbole – funktioniert 24/7
@@ -1914,11 +2004,11 @@ function startCountdown() {
 async function refreshAll() {
   const now = new Date();
   document.getElementById('lastUpdate').textContent = `Letztes Update: ${now.toLocaleTimeString('de-DE')}`;
-  
-  // Always update F&G (public API)
+
+  // Immer: F&G + Yields (öffentliche APIs, kein Key nötig)
   await updateFearGreed();
-  
-  // Alpaca data if connected
+  updateYieldPanel(); // parallel, kein await nötig
+
   if (connected) {
     await updateSentimentMetrics();
     await updateVIX();
