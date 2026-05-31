@@ -998,6 +998,8 @@ function mergeSnapshotWithBars(sym, bars, snapshot) {
 
 // Dynamische Positionsgröße (aus UI)
 let POSITION_SIZE = 7000;
+
+function getLotSize() {
   const sel = document.getElementById('lotSize');
   if (sel?.value === 'custom') {
     return parseInt(document.getElementById('lotCustom')?.value) || 7000;
