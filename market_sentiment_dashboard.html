@@ -21,7 +21,7 @@
     --accent-purple: #a371f7;
     --text: #e6edf3;
     --text-muted: #7d8590;
-    --text-dim: #30363d;
+    --text-dim: #8b949e;
     --extreme-fear: #ff1a44;
     --fear: #ff6b35;
     --neutral: #ffb800;
@@ -874,7 +874,7 @@
       <div style="margin-top:10px;flex:1;display:flex;flex-direction:column;justify-content:flex-end">
         <div style="font-size:8px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px">Sentiment-Signale</div>
         <div id="signalTable" style="display:flex;flex-direction:column;gap:5px">
-          <div style="font-size:10px;color:var(--text-dim)">Verbinden um Signale zu laden...</div>
+          <div style="font-size:10px;color:var(--text-muted)"> Signale zu laden...</div>
         </div>
       </div>
     </div>
@@ -998,7 +998,7 @@
         <span class="source-tag">Equity ETFs</span>
       </div>
       <div class="sector-list" id="sectorList" style="gap:4px">
-        <div style="font-size:10px;color:var(--text-dim)">Verbinden...</div>
+        <div style="font-size:10px;color:var(--text-muted)"></div>
       </div>
     </div>
 
@@ -1006,14 +1006,14 @@
     <div class="sector-panel" style="padding:16px">
       <div class="panel-header" style="margin-bottom:10px">
         <span class="panel-title">🛡 Safe Haven</span>
-        <span class="source-tag">Anleihen · Edelmetalle · PGM</span>
-      </div>
-      <!-- T-Bond Yield Panel (Yahoo Finance) -->
-      <div id="yieldPanel" style="margin-bottom:12px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px">
-        <span style="font-size:10px;color:var(--text-dim)">Yields werden geladen...</span>
+        <span class="source-tag">Edelmetalle · PGM · Anleihen</span>
       </div>
       <div class="sector-list" id="safehavenList" style="gap:4px">
-        <div style="font-size:10px;color:var(--text-dim)">Verbinden...</div>
+        <div style="font-size:10px;color:var(--text-muted)"></div>
+      </div>
+      <!-- T-Bond Yield Panel direkt unter Anleihen-ETFs -->
+      <div id="yieldPanel" style="margin-top:8px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px">
+        <span style="font-size:10px;color:var(--text-muted)"></span>
       </div>
     </div>
 
@@ -1021,10 +1021,14 @@
     <div class="sector-panel" style="padding:16px">
       <div class="panel-header" style="margin-bottom:10px">
         <span class="panel-title">⬡ Rohstoffe</span>
-        <span class="source-tag">Kupfer · Lithium · Basis</span>
+        <span class="source-tag">Kupfer · Öl · Lithium · Basis</span>
       </div>
       <div class="sector-list" id="commodityList" style="gap:4px">
-        <div style="font-size:10px;color:var(--text-dim)">Verbinden...</div>
+        <div style="font-size:10px;color:var(--text-muted)"></div>
+      </div>
+      <!-- Öl Spot-Preise (Yahoo Futures) -->
+      <div id="oilPanel" style="margin-top:8px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px">
+        <span style="font-size:10px;color:var(--text-muted)"></span>
       </div>
     </div>
   </div>
@@ -1097,11 +1101,6 @@ const SECTOR_ETFS = [
   {sym:'XLU',  name:'Utilities',   sub: false,  parent: null,  group: 'equity'},
   {sym:'XLRE', name:'Real Est.',   sub: false,  parent: null,  group: 'equity'},
 
-  // ── SAFE HAVEN: Anleihen (ETF als Kursindikator) ──
-  {sym:'TLT',  name:'Long Bonds',  sub: false,  parent: null,  group: 'safehaven'},
-  {sym:'BIL',  name:'T-Bills',     sub: true,   parent: 'TLT', group: 'safehaven'},
-  // T-Bond Yields als Yahoo-Indices (^IRX, ^FVX, ^TNX, ^TYX)
-  // werden separat via fetchYields() geladen, nicht über Alpaca
   // ── SAFE HAVEN: Edelmetalle ──
   {sym:'GLD',  name:'Gold ETF',    sub: false,  parent: null,  group: 'safehaven'},
   {sym:'SLV',  name:'Silber',      sub: true,   parent: 'GLD', group: 'safehaven'},
@@ -1110,16 +1109,24 @@ const SECTOR_ETFS = [
   // ── SAFE HAVEN: Platingruppenmetalle (PGM) ──
   {sym:'PPLT', name:'Platin',      sub: false,  parent: null,  group: 'safehaven'},
   {sym:'PALL', name:'Palladium',   sub: true,   parent: 'PPLT',group: 'safehaven'},
+  // ── SAFE HAVEN: Anleihen ETFs ──
+  {sym:'TLT',  name:'Long Bonds',  sub: false,  parent: null,  group: 'safehaven'},
+  {sym:'BIL',  name:'T-Bills',     sub: true,   parent: 'TLT', group: 'safehaven'},
 
   // ── ROHSTOFFE: Industriemetalle ──
   {sym:'COPX', name:'Kupfer ETF',  sub: false,  parent: null,  group: 'commodity'},
   {sym:'FCX',  name:'Freeport',    sub: true,   parent: 'COPX',group: 'commodity'},
   {sym:'SCCO', name:'S.Copper',    sub: true,   parent: 'COPX',group: 'commodity'},
   {sym:'TECK', name:'Teck Res.',   sub: true,   parent: 'COPX',group: 'commodity'},
+  {sym:'AA',   name:'Alcoa (Al)',  sub: true,   parent: 'COPX',group: 'commodity'},
   // ── ROHSTOFFE: Batteriemetalle ──
   {sym:'LIT',  name:'Lithium ETF', sub: false,  parent: null,  group: 'commodity'},
   {sym:'ALB',  name:'Albemarle',   sub: true,   parent: 'LIT', group: 'commodity'},
   {sym:'LTHM', name:'Livent',      sub: true,   parent: 'LIT', group: 'commodity'},
+  // ── ROHSTOFFE: Fossile (Öl + LNG) ──
+  {sym:'USO',  name:'WTI Öl ETF',  sub: false,  parent: null,  group: 'commodity'},
+  {sym:'BNO',  name:'Brent ETF',   sub: true,   parent: 'USO', group: 'commodity'},
+  {sym:'UNG',  name:'LNG/Nat.Gas', sub: true,   parent: 'USO', group: 'commodity'},
   // ── ROHSTOFFE: Breite Rohstoffe ──
   {sym:'PDBC', name:'Rohst. ETF',  sub: false,  parent: null,  group: 'commodity'},
 ];
@@ -1320,11 +1327,24 @@ async function updateSectors() {
     const syms = SECTOR_ETFS.map(s => s.sym);
     const allBars = await getDailyBars(syms);
 
-    // Hauptsektoren nach Performance sortieren
-    const mainSectors = SECTOR_ETFS
-      .filter(s => !s.sub)
+    // Equity-Hauptsektoren nach Performance sortieren
+    // Safe Haven + Commodity: fixe Reihenfolge wie im Array (nicht sortiert)
+    const equityMain = SECTOR_ETFS
+      .filter(s => !s.sub && s.group === 'equity')
       .map(s => ({ ...s, pct: (extractPriceChange(allBars[s.sym]) || {changePct:0}).changePct }))
       .sort((a, b) => b.pct - a.pct);
+
+    const safeMain = SECTOR_ETFS
+      .filter(s => !s.sub && s.group === 'safehaven')
+      .map(s => ({ ...s, pct: (extractPriceChange(allBars[s.sym]) || {changePct:0}).changePct }));
+    // Keine Sortierung – Reihenfolge wie im Array: Edelmetalle → PGM → Anleihen
+
+    const commMain = SECTOR_ETFS
+      .filter(s => !s.sub && s.group === 'commodity')
+      .map(s => ({ ...s, pct: (extractPriceChange(allBars[s.sym]) || {changePct:0}).changePct }))
+      .sort((a, b) => b.pct - a.pct);
+
+    const mainSectors = [...equityMain, ...safeMain, ...commMain];
 
     // Subsektoren mit Performance, gruppiert nach parent
     const subByParent = {};
@@ -1370,6 +1390,9 @@ async function updateSectors() {
       FCX:  '#cd7f32',
       SCCO: '#b8860b',
       TECK: '#a0785a',
+      // Rohstoffe: Öl
+      USO:  '#4a4a6a',
+      BNO:  '#3a3a5a',
       // Rohstoffe: Batteriemetalle
       LIT:  '#7fffd4',
       ALB:  '#5fced4',
@@ -1388,12 +1411,13 @@ async function updateSectors() {
     const safehavenAnleihenSyms = new Set(['TLT','BIL']);
     const safehavenEdelSyms     = new Set(['GLD','SLV','GDX','PHYS']);
     const safehavenPGMSyms      = new Set(['PPLT','PALL']);
-    const commodityIndustrieSyms= new Set(['COPX','FCX','SCCO','TECK']);
+    const commodityIndustrieSyms= new Set(['COPX','FCX','SCCO','TECK','AA']);
+    const commodityOilSyms      = new Set(['USO','BNO','UNG']);
     const commodityBatterieSyms = new Set(['LIT','ALB','LTHM']);
     const commodityBasisSyms    = new Set(['PDBC']);
 
-    const topGainerSym = mainSectors.filter(s => s.group === 'equity')[0]?.sym;
-    const topLoserSym  = mainSectors.filter(s => s.group === 'equity').slice(-1)[0]?.sym;
+    const topGainerSym = equityMain[0]?.sym;
+    const topLoserSym  = equityMain[equityMain.length - 1]?.sym;
     const shownSubGroups = new Set();
     const equityRows    = [];
     const safehavenRows = [];
@@ -1422,6 +1446,7 @@ async function updateSectors() {
           else if (safehavenPGMSyms.has(s.sym))  { subKey = 'sh-pgm';  subLabel = '⬡ PLATINGRUPPENMETALLE (PGM)'; }
         } else if (s.group === 'commodity') {
           if (commodityIndustrieSyms.has(s.sym)) { subKey = 'co-ind'; subLabel = '🔩 INDUSTRIEMETALLE'; }
+          else if (commodityOilSyms.has(s.sym))      { subKey = 'co-oil'; subLabel = '🛢 FOSSILE ROHSTOFFE (ÖL · LNG)'; }
           else if (commodityBatterieSyms.has(s.sym)) { subKey = 'co-bat'; subLabel = '⚡ BATTERIEMETALLE'; }
           else if (commodityBasisSyms.has(s.sym))    { subKey = 'co-bas'; subLabel = '📦 ROHSTOFFE BREIT'; }
         }
@@ -1660,7 +1685,8 @@ const TBOND_INDICES = [
 async function fetchAllYields() {
   const results = await Promise.allSettled(
     TBOND_INDICES.map(async t => {
-      const data = await fetchSpotPrice(encodeURIComponent(t.sym));
+      // fetchSpotPrice encodiert intern – direkt Symbol übergeben
+      const data = await fetchSpotPrice(t.sym);
       return { ...t, ...data };
     })
   );
@@ -1893,7 +1919,7 @@ function buildSignalTable(scores, spyResult, qqqResult, tltResult) {
     </div>
   `).join('');
   
-  document.getElementById('signalTable').innerHTML = html || '<div style="font-size:11px;color:var(--text-dim)">Keine Signale</div>';
+  document.getElementById('signalTable').innerHTML = html || '<div style="font-size:11px;color:var(--text-muted)">eine Signale</div>';
 }
 
 // ============================
@@ -1999,15 +2025,62 @@ function startCountdown() {
 }
 
 // ============================
+// ÖL SPOT PREISE (WTI + Brent Futures via Yahoo)
+// CL=F = WTI Crude, BZ=F = Brent Crude
+// ============================
+async function updateOilPanel() {
+  try {
+    const [wti, brent] = await Promise.all([
+      fetchSpotPrice('CL=F'),
+      fetchSpotPrice('BZ=F'),
+    ]);
+    const oilData = [
+      { name: 'WTI',   ...wti   },
+      { name: 'Brent', ...brent },
+    ];
+    const rows = oilData.map(o => {
+      const isUp  = o.changePct >= 0;
+      const sign  = isUp ? '+' : '';
+      const chgColor    = isUp ? 'var(--accent-green)' : 'var(--accent-red)';
+      const levelColor  = o.current > 90 ? '#ff3358'
+                        : o.current > 70 ? '#ffb800'
+                        : o.current > 55 ? '#7dde4a'
+                        :                  '#00ff88';
+      return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+        <span style="font-size:9px;color:var(--text-muted);width:36px;flex-shrink:0">${o.name}</span>
+        <div style="flex:1;height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+          <div style="width:${Math.min(100, o.current/120*100)}%;height:100%;background:${levelColor};border-radius:3px"></div>
+        </div>
+        <span style="font-size:11px;font-weight:600;color:${levelColor};width:52px;text-align:right">$${o.current.toFixed(2)}</span>
+        <span style="font-size:10px;color:${chgColor};width:52px;text-align:right">${sign}${o.changePct.toFixed(2)}%</span>
+      </div>`;
+    }).join('');
+    const spread = brent.current - wti.current;
+    const spreadNote = `<div style="margin-top:6px;font-size:9px;color:var(--text-dim)">
+      Brent-WTI Spread: <span style="color:${spread>5?'var(--accent-amber)':'var(--text-muted)'}">${spread>0?'+':''}$${spread.toFixed(2)}</span>
+      ${spread > 5 ? '· Geopolitische Prämie erhöht' : ''}
+    </div>`;
+    const panel = document.getElementById('oilPanel');
+    if (panel) panel.innerHTML = `
+      <div style="font-size:8px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">🛢 ÖL-SPOT (FUTURES)</div>
+      ${rows}${spreadNote}`;
+  } catch(e) {
+    const p = document.getElementById('oilPanel');
+    if (p) p.innerHTML = `<span style="font-size:10px;color:var(--accent-red)">Öl: ${e.message}</span>`;
+  }
+}
+
+// ============================
 // FULL REFRESH
 // ============================
 async function refreshAll() {
   const now = new Date();
   document.getElementById('lastUpdate').textContent = `Letztes Update: ${now.toLocaleTimeString('de-DE')}`;
 
-  // Immer: F&G + Yields (öffentliche APIs, kein Key nötig)
+  // Immer: F&G + Yields + Öl (öffentliche APIs, kein Key nötig)
   await updateFearGreed();
-  updateYieldPanel(); // parallel, kein await nötig
+  updateYieldPanel();  // parallel
+  updateOilPanel();    // parallel
 
   if (connected) {
     await updateSentimentMetrics();
