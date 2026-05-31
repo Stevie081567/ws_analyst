@@ -643,12 +643,12 @@ body::before {
     <div class="chip" data-filter="trend">Trend</div>
   </div>
 
-  <!-- SCORE THRESHOLDS -->
+  <!-- SCORE THRESHOLDS + PREIS-FILTER -->
   <div class="threshold-bar">
-    <span class="th-label">Score-Schwellen:</span>
+    <span class="th-label">Score:</span>
     <div class="th-item">
       <div class="th-dot" style="background:var(--green)"></div>
-      <span style="color:var(--muted)">Strong Buy ≥</span>
+      <span style="color:var(--muted)">SB ≥</span>
       <input type="number" id="thStrongBuy" class="th-input" value="75" min="50" max="95">
     </div>
     <div class="th-item">
@@ -661,7 +661,34 @@ body::before {
       <span style="color:var(--muted)">Watch ≥</span>
       <input type="number" id="thWatch" class="th-input" value="40" min="10" max="54">
     </div>
-    <div style="margin-left:auto;font-size:9px;color:var(--dim)">VIX-Filter: <span id="vixFilterStatus">--</span></div>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 6px"></div>
+    <span class="th-label">Lot $:</span>
+    <div class="th-item">
+      <select id="lotSize" class="cfg-select" style="font-size:10px;padding:3px 8px;height:auto">
+        <option value="3000">$3.000</option>
+        <option value="5000">$5.000</option>
+        <option value="7000" selected>$7.000</option>
+        <option value="10000">$10.000</option>
+        <option value="15000">$15.000</option>
+        <option value="custom">Frei...</option>
+      </select>
+      <input type="number" id="lotCustom" class="th-input" value="7000" min="1000"
+             style="width:70px;display:none">
+    </div>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 6px"></div>
+    <span class="th-label">Preis $:</span>
+    <div class="th-item">
+      <span style="color:var(--muted)">Min</span>
+      <input type="number" id="priceMin" class="th-input" value="5"   min="1"  max="100" style="width:44px">
+    </div>
+    <div class="th-item">
+      <span style="color:var(--muted)">Max</span>
+      <input type="number" id="priceMax" class="th-input" value="500" min="50" max="999" style="width:52px">
+    </div>
+    <div style="margin-left:auto;font-size:9px;color:var(--muted)">
+      Min Stück: <span id="minSharesDisplay" style="color:var(--green);font-weight:600">14</span>
+      &nbsp;·&nbsp; VIX: <span id="vixFilterStatus">--</span>
+    </div>
   </div>
 
   <!-- RESULTS HEADER -->
@@ -713,9 +740,10 @@ body::before {
 
 <script>
 // ═══════════════════════════════════════════════
-// SCREENING UNIVERSE – Top Holdings je ETF-Sektor
-// Erweitert auf 10 Symbole, keine OTC/ADR Duplikate
-// Überschneidungen werden im Scan dedupliziert
+// SCREENING UNIVERSE
+// SWING: ETF-Holdings (etabliert, breit)
+// DAY:   Momentum-Titel, Top-3-Sektoren aus Bridge
+//        Preis-gefiltert nach Lot/Min-Stücke
 // ═══════════════════════════════════════════════
 const SECTOR_UNIVERSE = {
   'Tech (XLK)':         ['AAPL','MSFT','NVDA','AVGO','AMD','ORCL','CSCO','ACN','IBM','TXN'],
@@ -733,6 +761,88 @@ const SECTOR_UNIVERSE = {
   'Travel (JETS)':      ['DAL','UAL','AAL','LUV','RCL','CCL','MAR','HLT','EXPE','BKNG'],
   'Lithium (LIT)':      ['ALB','SQM','LTHM','SGML','PLL','LAC','ALTM','CRIS','LIXT','AVL'],
   'Gold & Rohst.(GLD)': ['NEM','GOLD','AEM','WPM','KGC','FCX','AGI','EXK','PAAS','BTG'],
+};
+
+// DAY TRADING – Momentum-Titel nach Sektor
+// Alle Titel: $5–$500, hohe Liquidität, schnelle Reaktion
+// Sektoren passend zu SECTOR_UNIVERSE Keys für Bridge-Matching
+const DAY_UNIVERSE = {
+  'Tech (XLK)': [
+    // Large Cap Tech – liquide, hoher Dollar-Volume
+    'AMD','NVDA','INTC','MU','QCOM','MRVL','SMCI',
+    // AI/Cloud Momentum
+    'PLTR','PATH','AI','BBAI','SOUN','IONQ',
+    // Cybersecurity
+    'CRWD','S','PANW','FTNT','ZS','CYBR',
+    // Cloud/SaaS
+    'NET','SNOW','DDOG','MDB','GTLB','BILL',
+    // Semiconductor Mid-Cap
+    'ONTO','WOLF','ACLS','MKSI','COHU',
+  ],
+  'Semis (SOXX)': [
+    'AMD','MU','INTC','QCOM','MRVL','WOLF',
+    'ONTO','ACLS','COHU','CAMT','AMBA','ALGM',
+    'SITM','DIOD','SMTC','AEHR','FORM','MTSI',
+  ],
+  'Finance (XLF)': [
+    // Banken
+    'BAC','C','WFC','USB','RF','KEY','FITB',
+    // FinTech Momentum
+    'SQ','AFRM','SOFI','UPST','LC','OPFI',
+    // Crypto-adjacent
+    'COIN','MSTR','MARA','RIOT','CLSK','BTBT',
+    // Broker/Asset
+    'IBKR','SCHW','HOOD','FUTU',
+  ],
+  'Energie (XLE)': [
+    // Oil E&P Mid-Cap
+    'COP','DVN','MRO','APA','MTDR','SM',
+    'CTRA','CHRD','ESTE','TALO','NOG','VTLE',
+    // Oil Services
+    'HAL','SLB','BKR','NOV','LBRT','RES',
+  ],
+  'Renewables (ICLN)': [
+    'ENPH','SEDG','RUN','ARRY','NOVA',
+    'FSLR','CSIQ','JKS','MAXN','SPWR',
+    'PLUG','BLDP','FCEL','BE','HYZN',
+  ],
+  'Health (XLV)': [
+    // Biotech Momentum $10-$300
+    'MRNA','BNTX','NVAX','ALNY','INCY',
+    'EXAS','PTGX','FATE','KYMR','RCKT',
+    'HALO','GKOS','TMDX','NTRA','RXST',
+    // MedTech
+    'ISRG','IDXX','ALGN','HOLX','IART',
+  ],
+  'Defense (ITA)': [
+    'KTOS','CACI','LDOS','BWXT','HEI',
+    'AXON','OSIS','DRS','TDY','MRCY',
+    'ASTR','RKLB','ASTS','PL','BKSY',
+  ],
+  'Industrie (XLI)': [
+    'GE','ETN','IR','RRX','XYL',
+    'GNRC','FWRD','HUBG','SAIA','ODFL',
+    'TKR','ATKR','AIT','XPEL','TREX',
+  ],
+  'Konsum Cyc (XLY)': [
+    // Retail Momentum
+    'NKE','LULU','RH','BURL','FIVE',
+    // Gambling/Entertainment
+    'DKNG','PENN','MGM','LVS','WYNN',
+    // Travel/Leisure
+    'DAL','UAL','AAL','RCL','CCL',
+    // EV
+    'RIVN','LCID','FSR','ZEV',
+  ],
+  'Lithium (LIT)': [
+    'ALB','LTHM','LAC','PLL','SGML',
+    'MP','LTHM','ALTM','ATLX','NOVX',
+  ],
+  'Gold & Rohst.(GLD)': [
+    'NEM','GOLD','AEM','KGC','EXK',
+    'PAAS','BTG','AGI','FSM','MAG',
+    'FCX','AA','CLF','X','HL',
+  ],
 };
 
 // ═══════════════════════════════════════════════
@@ -886,8 +996,50 @@ function mergeSnapshotWithBars(sym, bars, snapshot) {
   };
 }
 
-// Positionsgröße für Liquiditäts-Berechnung
-const POSITION_SIZE = 6000; // $6.000 Mitte 5k-7k
+// Dynamische Positionsgröße (aus UI)
+let POSITION_SIZE = 7000;
+  const sel = document.getElementById('lotSize');
+  if (sel?.value === 'custom') {
+    return parseInt(document.getElementById('lotCustom')?.value) || 7000;
+  }
+  return parseInt(sel?.value) || 7000;
+}
+
+function updateMinSharesDisplay() {
+  const lot      = getLotSize();
+  const priceMax = parseInt(document.getElementById('priceMax')?.value) || 500;
+  const minShares = Math.floor(lot / priceMax);
+  const el = document.getElementById('minSharesDisplay');
+  if (el) {
+    el.textContent = minShares;
+    el.style.color = minShares >= 10 ? 'var(--green)' : 'var(--amber)';
+  }
+}
+
+// Top-3 Sektoren aus Bridge (nach pct absteigend, nur positive)
+function getTop3SectorsFromBridge() {
+  try {
+    const raw = localStorage.getItem('ws_sector_rankings');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Date.now() - parsed.timestamp > 4 * 60 * 60 * 1000) return null;
+    const top3 = parsed.data
+      .filter(s => s.pct > 0)
+      .sort((a, b) => b.pct - a.pct)
+      .slice(0, 3)
+      .map(s => s.sym);
+    return top3.length >= 1 ? top3 : null;
+  } catch(e) { return null; }
+}
+
+// ETF-Symbol → DAY_UNIVERSE Key
+const ETF_TO_DAY = {
+  'XLK':'Tech (XLK)', 'SOXX':'Semis (SOXX)', 'ROBO':'Robotik (ROBO)',
+  'XLF':'Finance (XLF)', 'XLE':'Energie (XLE)', 'XOP':'Öl&Gas (XOP)',
+  'ICLN':'Renewables (ICLN)', 'XLV':'Health (XLV)', 'XLI':'Industrie (XLI)',
+  'XLY':'Konsum Cyc (XLY)', 'ITA':'Defense (ITA)',
+  'LIT':'Lithium (LIT)', 'GLD':'Gold & Rohst.(GLD)',
+};
 
 function calcMA(bars, period) {
   if (bars.length < period) return null;
@@ -957,6 +1109,11 @@ function scoreSwing(sym, bars, spyBars) {
   const last      = bars[bars.length - 1];
   const prev      = bars[bars.length - 2];
   const price     = last.c;
+
+  // Preis-Filter
+  const pMin = parseFloat(document.getElementById('priceMin')?.value) || 5;
+  const pMax = parseFloat(document.getElementById('priceMax')?.value) || 500;
+  if (price < pMin || price > pMax) return null;
   const prevClose = prev.c;
   const changePct = ((price - prevClose) / prevClose) * 100;
 
@@ -1037,6 +1194,14 @@ function scoreDay(sym, bars, spyBars) {
 
   const price     = snap ? snap.price     : lastBar.c;
   const prevClose = snap ? snap.prevClose : prevBar.c;
+
+  // Preis-Filter + Min-Stücke Check
+  const pMin    = parseFloat(document.getElementById('priceMin')?.value) || 5;
+  const pMax    = parseFloat(document.getElementById('priceMax')?.value) || 500;
+  const minShrs = Math.floor(POSITION_SIZE / pMax);
+  const shares  = Math.floor(POSITION_SIZE / price);
+  if (price < pMin || price > pMax) return null;
+  if (shares < 10) return null; // Mindest-Stückzahl
   const changePct = snap ? snap.changePct : ((lastBar.c - prevBar.c) / prevBar.c) * 100;
 
   // Heutiges Volume: Snapshot wenn RTH, sonst gestriger Bar
@@ -1493,6 +1658,19 @@ function initBridgeUI() {
   }
 }
 
+// Lot + Preis-Filter Live-Update
+function initLotPriceListeners() {
+  const lotSel = document.getElementById('lotSize');
+  if (lotSel) lotSel.addEventListener('change', () => {
+    const custom = document.getElementById('lotCustom');
+    if (custom) custom.style.display = lotSel.value === 'custom' ? 'inline-block' : 'none';
+    updateMinSharesDisplay();
+  });
+  document.getElementById('lotCustom')?.addEventListener('input', updateMinSharesDisplay);
+  document.getElementById('priceMax')?.addEventListener('input', updateMinSharesDisplay);
+  document.getElementById('priceMin')?.addEventListener('input', updateMinSharesDisplay);
+}
+
 function updateActiveSectors() {
   if (bridgeActive) {
     // Aus Bridge-Chips
@@ -1587,14 +1765,42 @@ async function runScan() {
     document.getElementById('connDot').style.background = 'var(--green)';
     document.getElementById('connStatus').textContent = `Verbunden · Alpaca ${env.toUpperCase()}`;
 
+    // Lot-Size aus UI übernehmen
+    POSITION_SIZE = getLotSize();
+    updateMinSharesDisplay();
+
+    // Universum wählen: Day → DAY_UNIVERSE (Top-3 Sektoren aus Bridge)
+    //                   Swing → SECTOR_UNIVERSE (alle Sektoren)
+    let baseUniverse = SECTOR_UNIVERSE;
+    let universeNote = '';
+
+    if (mode === 'day') {
+      baseUniverse = DAY_UNIVERSE;
+      const top3 = getTop3SectorsFromBridge();
+      if (top3 && top3.length > 0) {
+        // Nur Top-3-Sektoren aus Bridge scannen
+        const filteredUni = {};
+        top3.forEach(sym => {
+          const key = ETF_TO_DAY[sym];
+          if (key && DAY_UNIVERSE[key]) filteredUni[key] = DAY_UNIVERSE[key];
+        });
+        // Fallback: wenn Bridge-Sektoren nicht im DAY_UNIVERSE → alle nehmen
+        baseUniverse = Object.keys(filteredUni).length >= 1 ? filteredUni : DAY_UNIVERSE;
+        universeNote = Object.keys(filteredUni).length >= 1
+          ? `Bridge Top-${Object.keys(filteredUni).length}: ${Object.keys(filteredUni).join(', ')}`
+          : 'Alle Sektoren (kein Bridge-Signal)';
+      } else {
+        universeNote = 'Alle Sektoren (kein Bridge)';
+      }
+    }
+
     // Symbole aufbauen – gefiltert nach aktivem Sektor-Set
-    setProgress(15, 'Symbole aufbauen...');
+    setProgress(15, `Symbole aufbauen (${universeNote || 'Swing'})...`);
     const allSymbols = new Set(['SPY']);
     cachedSectorSymbols = {};
-    for (const [sector, holdings] of Object.entries(SECTOR_UNIVERSE)) {
-      // Überspringe Sektoren die nicht aktiv sind
+    for (const [sector, holdings] of Object.entries(baseUniverse)) {
       if (activeSectors && !activeSectors.has(sector)) continue;
-      const syms = holdings.slice(0, topN);
+      const syms = mode === 'day' ? holdings : holdings.slice(0, topN);
       cachedSectorSymbols[sector] = syms;
       syms.forEach(s => allSymbols.add(s));
     }
@@ -1861,6 +2067,10 @@ window.addEventListener('load', () => {
 
   // Sentiment Bridge initialisieren (liest localStorage vom Sentiment Dashboard)
   initBridgeUI();
+
+  // Lot + Preis-Filter Live-Update
+  initLotPriceListeners();
+  updateMinSharesDisplay();
 
   // Config aus localStorage laden
   const cfg = loadConfig();
