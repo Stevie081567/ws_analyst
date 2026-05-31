@@ -25,8 +25,8 @@
   --purple: #a371f7;
   --cyan: #00c8ff;
   --text: #e6edf3;
-  --muted: #7d8590;
-  --dim: #30363d;
+  --muted: #b1bac4;
+  --dim: #c9d1d9;        /* aufgehellt von #30363d für besseren Kontrast */
   --safe: env(safe-area-inset-bottom, 0px);
 }
 
@@ -201,7 +201,7 @@ body::before {
   text-transform: uppercase;
   color: var(--muted);
 }
-.count-badge {
+/* count-badge */ .count-badge {
   font-size: 9px;
   color: var(--muted);
   background: var(--surface2);
@@ -312,9 +312,15 @@ body::before {
   letter-spacing: 0.05em;
   margin-top: 2px;
 }
+.card-name {
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
 .card-sector {
-  font-size: 8px;
-  color: var(--dim);
+  font-size: 9px;
+  color: #c9d1d9;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin-top: 2px;
@@ -348,8 +354,14 @@ body::before {
   margin-bottom: 10px;
 }
 .metric-cell { display:flex; flex-direction:column; gap:2px; }
-.mc-label { font-size:7px; letter-spacing:0.12em; text-transform:uppercase; color:var(--dim); }
-.mc-val   { font-size:11px; font-weight:500; }
+.mc-label {
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #c9d1d9;        /* aufgehellt von var(--dim) #30363d */
+  font-weight: 500;
+}
+.mc-val { font-size: 12px; font-weight: 600; color: #ffffff; }
 
 /* Signal badges */
 .card-signals {
@@ -385,21 +397,22 @@ body::before {
   font-family: 'Unbounded', sans-serif;
   font-size: 16px;
   font-weight: 700;
+  color: #e6edf3;
 }
-.price-chg { font-size: 12px; font-weight:500; }
+.price-chg { font-size: 12px; font-weight: 600; }
 .price-chg.up   { color: var(--green); }
 .price-chg.down { color: var(--red); }
 
 /* Rating label */
 .rating-label {
-  font-size: 8px;
-  letter-spacing: 0.15em;
+  font-size: 9px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 700;
   padding: 3px 8px;
   border-radius: 3px;
 }
-.rating-sb { background:rgba(0,255,136,0.15); color:var(--green); }
+.rating-sb { background:rgba(0,255,136,0.15); color:#00ff88; }
 .rating-b  { background:rgba(125,222,74,0.12); color:#7dde4a; }
 .rating-w  { background:rgba(255,184,0,0.12);  color:var(--amber); }
 
@@ -457,7 +470,7 @@ body::before {
 
   .header, .config-bar, .filter-bar, .threshold-bar,
   .loading-overlay, .status-bar, #btnPdf, #btnScan,
-  #btnClear, #iosWarning, .section-hdr .count-badge { display: none !important; }
+  #btnClear, #iosWarning, .section-hdr /* count-badge */ .count-badge { display: none !important; }
 
   .app { padding: 0 !important; max-width: 100% !important; }
 
