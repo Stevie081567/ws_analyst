@@ -1672,7 +1672,34 @@ async function fetchSpotPrice(yahooSymbol) {
 }
 
 // ============================
-// T-BOND YIELDS via Yahoo Finance (^IRX, ^FVX, ^TNX, ^TYX)
+// GOLD SPOT – Multi-Source (robust, 3 Quellen)
+// Quelle 1: XAUUSD=X Yahoo (Spot, genau)
+// Quelle 2: GC=F  Yahoo (COMEX Futures, ~Spot)
+// Quelle 3: metals.live (öffentliche REST API, kein Key)
+// ============================
+async function fetchGoldSpot() {
+  // Alle drei parallel starten – schnellste erfolgreiche Antwort gewinnt
+  const results = await Promise.allSettled([
+    fetchSpotPrice('XAUUSD=X').then(r => ({ ...r, source: 'XAU/USD' })),
+    fetchSpotPrice('GC=F').then(r  => ({ ...r, source: 'GC Futures' })),
+    fetch('https://api.metals.live/v1/spot/gold')
+      .then(r => r.json())
+      .then(d => {
+        const price = d[0]?.price ?? d?.price;
+        if (!price) throw new Error('no price');
+        // metals.live gibt keinen prevClose – wir schätzen 0% Änderung
+        return { current: price, prevClose: price, change: 0, changePct: 0, source: 'metals.live' };
+      }),
+  ]);
+
+  // Erste erfolgreiche Quelle mit plausiblem Preis (>1000 = echter Gold-Spot)
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value.current > 1000) {
+      return r.value;
+    }
+  }
+  throw new Error('Alle Gold-Quellen fehlgeschlagen');
+}
 // Yield steigt = Bearish / Rezessionsrisiko
 // ============================
 const TBOND_INDICES = [
@@ -1778,48 +1805,28 @@ async function updateSentimentMetrics() {
       scores.push(setMetricCard('qqq', `$${price.toFixed(2)}`, change, changePct, cls));
     }
 
-    // XAUUSD – Gold Spot via Yahoo Finance (parallel zu VIX-Fetch)
+    // XAUUSD – Gold Spot, Multi-Source für Stabilität
+    // Quelle 1: XAUUSD=X Yahoo, Quelle 2: GC=F Futures Yahoo, Quelle 3: metals.live API
     try {
-      const xauResult = await fetchSpotPrice('XAUUSD=X');
-      const { current, change, changePct } = xauResult;
+      const xauResult = await fetchGoldSpot();
+      const { current, change, changePct, source } = xauResult;
       const cls = changePct > 0.5 ? 'warning' : changePct < -0.5 ? 'info' : 'neutral';
-      setMetricCard('gld',
-        `$${current.toFixed(0)}`,  // Spot-Preis in $ (z.B. $3.245)
-        change, changePct, cls);
-      // Name-Label auf Karte aktualisieren
+      setMetricCard('gld', `$${current.toFixed(0)}`, change, changePct, cls);
       const nameEl = document.querySelector('#card-gld .metric-name');
-      if (nameEl) nameEl.textContent = 'Gold Spot (XAU/USD)';
+      if (nameEl) nameEl.textContent = `Gold Spot (${source})`;
     } catch(e) {
-      // Fallback auf GLD ETF
-      try {
-        const gldBars = await getDailyBars(['GLD']);
-        const gldResult = extractPriceChange(gldBars['GLD']);
-        if (gldResult) {
-          const { price, change, changePct } = gldResult;
-          setMetricCard('gld', `$${price.toFixed(2)}`, change, changePct, 'neutral');
-        }
-      } catch(e2) {
-        document.getElementById('gldVal').textContent = 'N/A';
-      }
+      document.getElementById('gldVal').textContent = 'N/A';
     }
 
-    // XAGUSD – Silber Spot via Yahoo Finance
+    // XAGUSD – Silber Spot
     try {
       const xagResult = await fetchSpotPrice('XAGUSD=X');
       const { current, change, changePct } = xagResult;
-      const cls = changePct > 0.5 ? 'warning' : changePct < -0.5 ? 'info' : 'neutral';
-      // Silber zeigt im TLT-Slot wenn Silber-Kachel existiert, sonst DXY-Slot
-      const silverId = document.getElementById('card-xag') ? 'xag' : 'tlt';
-      if (silverId === 'tlt') {
-        // Silber-Info als Sub-Label unter TLT anzeigen
-        const tltSubEl = document.getElementById('tlt-sub-label');
-        if (tltSubEl) {
-          const sign = changePct >= 0 ? '+' : '';
-          tltSubEl.innerHTML = `<span style="font-size:9px;color:#c0c0c0">XAG/USD: $${current.toFixed(2)} <span style="color:${changePct>=0?'var(--accent-green)':'var(--accent-red)'}">${sign}${changePct.toFixed(2)}%</span></span>`;
-        }
+      const tltSubEl = document.getElementById('tlt-sub-label');
+      if (tltSubEl) {
+        const sign = changePct >= 0 ? '+' : '';
+        tltSubEl.innerHTML = `<span style="font-size:9px;color:#c0c0c0">XAG/USD: $${current.toFixed(2)} <span style="color:${changePct>=0?'var(--accent-green)':'var(--accent-red)'}">${sign}${changePct.toFixed(2)}%</span></span>`;
       }
-      // Silber-Kachel direkt befüllen (falls vorhanden)
-      setMetricCard('gld-xag', `$${current.toFixed(2)}`, change, changePct, cls);
     } catch(e) { /* Silber optional */ }
 
     // TLT
