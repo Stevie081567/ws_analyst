@@ -1544,22 +1544,60 @@ function initBridgeUI() {
     document.getElementById('bridgeTimestamp').textContent =
       `· Stand: vor ${age < 1 ? '<1' : age} Min`;
 
-    // Sektor-Chips sortiert nach Performance
+    // Sektor-Chips sortiert nach Performance – farbkodiert nach Rang
     const sectors = [...bridgeData.data].sort((a, b) => b.pct - a.pct);
     const chips   = document.getElementById('bridgeSectorChips');
-    chips.innerHTML = sectors.map(s => {
+
+    chips.innerHTML = sectors.map((s, i) => {
+      const rank    = i + 1;
       const isPos   = s.pct >= 0;
-      const color   = Math.abs(s.pct) >= 1.2 ? (isPos ? '#00ff88' : '#ff3358')
-                    : Math.abs(s.pct) >= 0.5  ? (isPos ? '#7dde4a' : '#ff9640')
-                    : 'var(--muted)';
       const sign    = isPos ? '+' : '';
-      const active  = s.pct > 0; // nur positive Sektoren vorselektiert
+
+      // Farbkodierung nach Rang
+      let color, bgColor, borderColor, rankBadge = '', fontWeight = '500';
+      if (rank <= 3 && isPos) {
+        // TOP 3 → GRÜN → werden gescannt
+        color       = '#00ff88';
+        bgColor     = 'rgba(0,255,136,0.12)';
+        borderColor = 'rgba(0,255,136,0.5)';
+        fontWeight  = '700';
+        rankBadge   = `<span style="font-size:7px;background:#00ff88;color:#090c10;border-radius:2px;padding:1px 4px;font-weight:700;letter-spacing:0.05em">SCAN</span>`;
+      } else if (rank <= 6 && isPos) {
+        // Rang 4-6 positiv → GELB
+        color       = '#ffdd00';
+        bgColor     = 'rgba(255,220,0,0.08)';
+        borderColor = 'rgba(255,220,0,0.3)';
+      } else if (rank <= 9 && isPos) {
+        // Rang 7-9 positiv → ORANGE
+        color       = '#ff9640';
+        bgColor     = 'rgba(255,150,64,0.08)';
+        borderColor = 'rgba(255,150,64,0.25)';
+      } else if (!isPos) {
+        // Negativ → ROT-GRAU
+        color       = '#6b778c';
+        bgColor     = 'transparent';
+        borderColor = 'var(--border)';
+      } else {
+        // Neutral/Rest → GRAU
+        color       = '#7d8590';
+        bgColor     = 'transparent';
+        borderColor = 'var(--border)';
+      }
+
+      const active = rank <= 3 && isPos;
+
       return `<div class="chip sector-chip ${active ? 'active' : ''}"
-                   data-sym="${s.sym}"
-                   data-pct="${s.pct}"
-                   style="display:flex;align-items:center;gap:5px;${active?'border-color:'+color+';background:'+color+'18;color:'+color:''}">
+                   data-sym="${s.sym}" data-pct="${s.pct}"
+                   style="display:flex;align-items:center;gap:5px;
+                          border-color:${borderColor};
+                          background:${bgColor};
+                          color:${color};
+                          font-weight:${fontWeight};
+                          opacity:${isPos ? '1' : '0.6'}">
+        <span style="font-size:9px;color:var(--dim);font-weight:400">#${rank}</span>
         <span>${s.name}</span>
-        <span style="font-size:8px;color:${color};font-weight:600">${sign}${s.pct.toFixed(2)}%</span>
+        <span style="font-size:8px;font-weight:600">${sign}${s.pct.toFixed(2)}%</span>
+        ${rankBadge}
       </div>`;
     }).join('');
 
@@ -1582,20 +1620,19 @@ function initBridgeUI() {
       updateActiveSectors();
     });
 
-    // Chip-Klick
+    // Chip-Klick – Toggle aktiv/inaktiv
     chips.addEventListener('click', e => {
       const chip = e.target.closest('.sector-chip');
       if (!chip) return;
       chip.classList.toggle('active');
-      const pct   = parseFloat(chip.dataset.pct);
-      const isPos = pct >= 0;
-      const color = Math.abs(pct) >= 1.2 ? (isPos ? '#00ff88' : '#ff3358')
-                  : Math.abs(pct) >= 0.5  ? (isPos ? '#7dde4a' : '#ff9640')
-                  : 'var(--muted)';
+      const pct  = parseFloat(chip.dataset.pct);
+      const rank = [...chips.querySelectorAll('.sector-chip')].indexOf(chip) + 1;
       if (chip.classList.contains('active')) {
-        chip.style.borderColor = color;
-        chip.style.background  = color + '18';
-        chip.style.color       = color;
+        // Farbe nach Rang wiederherstellen
+        const col = rank <= 3 ? '#00ff88' : rank <= 6 ? '#ffdd00' : '#ff9640';
+        chip.style.borderColor = col.replace(')', ',0.5)').replace('rgb', 'rgba').replace('#00ff88','rgba(0,255,136,0.5)').replace('#ffdd00','rgba(255,220,0,0.3)').replace('#ff9640','rgba(255,150,64,0.25)');
+        chip.style.background  = rank <= 3 ? 'rgba(0,255,136,0.12)' : rank <= 6 ? 'rgba(255,220,0,0.08)' : 'rgba(255,150,64,0.08)';
+        chip.style.color       = rank <= 3 ? '#00ff88' : rank <= 6 ? '#ffdd00' : '#ff9640';
       } else {
         chip.style.borderColor = 'var(--border)';
         chip.style.background  = 'transparent';
