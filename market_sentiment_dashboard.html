@@ -797,6 +797,10 @@
           <span style="color:#ffb800;font-weight:600">NEUTRAL</span>
           <span style="color:#00ff88;font-weight:600">BULLISCH ▶</span>
         </div>
+        <!-- Score Breakdown: US / Europa / Asien -->
+        <div id="scoreBreakdown" style="margin-top:6px;font-size:9px;letter-spacing:0.05em;display:flex;flex-wrap:wrap;gap:6px;color:var(--text-dim)">
+          <span>Warte auf Daten...</span>
+        </div>
       </div>
 
       <!-- 6 Indikatoren-Kacheln: 3×2 kompakt -->
@@ -1876,33 +1880,101 @@ async function updateSentimentMetrics() {
       document.getElementById('dxyVal').textContent = 'N/A';
     }
     
-    // Overall score – granulare Einstufung
+    // ═══════════════════════════════════════════════════════
+    // GEWICHTETER COMPOSITE SCORE
+    // Berücksichtigt US-Indikatoren + Global Markets
+    // mit Europa-Reversal-Logik aus Trading-Erfahrung
+    // ═══════════════════════════════════════════════════════
     if (scores.length > 0) {
-      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
 
-      // 0–100 Skala: 50 = neutral, jeder % changePct = 5 Punkte
-      const scoreNum = Math.min(100, Math.max(0, Math.round(50 + avg * 5)));
-      const barPct   = scoreNum; // identisch für Pointer
+      // ── Gewichtete US-Basis (aus Alpaca) ──
+      // scores[] = [spy, qqq, tlt] changePct Werte
+      const weights = { spy: 0.20, qqq: 0.15, tlt: 0.10 };
+      const usBase  = [
+        { v: spyResult?.changePct ?? 0,  w: 0.20 },
+        { v: qqqResult?.changePct ?? 0,  w: 0.15 },
+        { v: tltResult?.changePct ?? 0,  w: 0.10 },
+      ];
+      const usScore = usBase.reduce((s, x) => s + x.v * x.w, 0)
+                    / usBase.reduce((s, x) => s + x.w, 0);
+
+      // ── Global Markets (aus Cache) ──
+      const asiaMarkets   = globalMarketsCache.filter(m => m.region === 'asia');
+      const europeMarkets = globalMarketsCache.filter(m => m.region === 'europe');
+      const asiaAvg       = asiaMarkets.length   ? asiaMarkets.reduce((s,m) => s+m.changePct, 0)   / asiaMarkets.length   : null;
+      const europeAvg     = europeMarkets.length ? europeMarkets.reduce((s,m) => s+m.changePct, 0) / europeMarkets.length : null;
+
+      // ── Europa-Reversal-Adjustment (Trading-Erfahrung) ──
+      // Europa stark negativ → Contrarian-Bonus für US (historisches Intraday-Reversal)
+      // Europa stark positiv → Vorsicht, bereits eingepreist / Überdehnung
+      let reversalAdj = 0;
+      let reversalNote = '';
+      if (europeAvg !== null) {
+        if (europeAvg < -1.5) {
+          reversalAdj  = +0.4; // starkes Reversal-Signal
+          reversalNote = `⚡ Europa stark negativ (${europeAvg.toFixed(2)}%) → historisches US Intraday-Reversal-Muster`;
+        } else if (europeAvg < -0.8) {
+          reversalAdj  = +0.2;
+          reversalNote = `📊 Europa negativ (${europeAvg.toFixed(2)}%) → moderates Reversal-Potenzial`;
+        } else if (europeAvg > 1.5) {
+          reversalAdj  = -0.2; // bereits eingepreist
+          reversalNote = `⚠ Europa stark positiv (${europeAvg.toFixed(2)}%) → Vorsicht: US bereits eingepreist`;
+        }
+      }
+
+      // ── Finaler gewichteter Score ──
+      // US 50% + Europa 30% + Asien 20% (wenn vorhanden)
+      let weightedAvg = usScore * 0.50;
+      let totalWeight = 0.50;
+
+      if (europeAvg !== null) {
+        weightedAvg += (europeAvg + reversalAdj) * 0.30;
+        totalWeight += 0.30;
+      }
+      if (asiaAvg !== null) {
+        weightedAvg += asiaAvg * 0.20;
+        totalWeight += 0.20;
+      }
+      // Normalisieren falls nicht alle Quellen verfügbar
+      const finalAvg = weightedAvg / totalWeight;
+
+      // 0–100 Skala
+      const scoreNum = Math.min(100, Math.max(0, Math.round(50 + finalAvg * 8)));
 
       let scoreLabel, scoreColor;
-      if      (avg >  2.0) { scoreLabel = 'EXTREM BULLISCH';   scoreColor = '#00ff88'; }
-      else if (avg >  1.0) { scoreLabel = 'STARK BULLISCH';    scoreColor = '#00ff88'; }
-      else if (avg >  0.3) { scoreLabel = 'LEICHT BULLISCH';   scoreColor = '#7dde4a'; }
-      else if (avg > -0.3) { scoreLabel = 'NEUTRAL';           scoreColor = '#ffb800'; }
-      else if (avg > -1.0) { scoreLabel = 'LEICHT BÄRISCH';    scoreColor = '#ff9640'; }
-      else if (avg > -2.0) { scoreLabel = 'STARK BÄRISCH';     scoreColor = '#ff6b35'; }
-      else                 { scoreLabel = 'EXTREM BÄRISCH';    scoreColor = '#ff1a44'; }
+      if      (finalAvg >  2.0) { scoreLabel = 'EXTREM BULLISCH';  scoreColor = '#00ff88'; }
+      else if (finalAvg >  1.0) { scoreLabel = 'STARK BULLISCH';   scoreColor = '#00ff88'; }
+      else if (finalAvg >  0.3) { scoreLabel = 'LEICHT BULLISCH';  scoreColor = '#7dde4a'; }
+      else if (finalAvg > -0.3) { scoreLabel = 'NEUTRAL';          scoreColor = '#ffb800'; }
+      else if (finalAvg > -1.0) { scoreLabel = 'LEICHT BÄRISCH';   scoreColor = '#ff9640'; }
+      else if (finalAvg > -2.0) { scoreLabel = 'STARK BÄRISCH';    scoreColor = '#ff6b35'; }
+      else                      { scoreLabel = 'EXTREM BÄRISCH';   scoreColor = '#ff1a44'; }
 
-      const scoreEl = document.getElementById('overallScore');
-      scoreEl.textContent = scoreLabel;
-      scoreEl.style.color = scoreColor;
+      document.getElementById('overallScore').textContent = scoreLabel;
+      document.getElementById('overallScore').style.color = scoreColor;
 
       const scoreNumEl = document.getElementById('overallScoreNum');
       if (scoreNumEl) { scoreNumEl.textContent = scoreNum; scoreNumEl.style.color = scoreColor; }
 
-      // Pointer positionieren (left in %, leicht korrigiert für Pfeilbreite)
       const pointer = document.getElementById('overallPointer');
       if (pointer) pointer.style.left = `${scoreNum}%`;
+
+      // Score-Breakdown als Tooltip unter dem Score
+      const breakdown = document.getElementById('scoreBreakdown');
+      if (breakdown) {
+        const usLabel = (usScore >= 0 ? '+' : '') + usScore.toFixed(2);
+        const euLabel = europeAvg !== null ? (europeAvg >= 0 ? '+' : '') + europeAvg.toFixed(2) + '%' : '--';
+        const asLabel = asiaAvg  !== null ? (asiaAvg  >= 0 ? '+' : '') + asiaAvg.toFixed(2)  + '%' : '--';
+        breakdown.innerHTML = `
+          <span style="color:var(--text-dim)">US: <span style="color:${usScore>=0?'#7dde4a':'#ff9640'}">${usLabel}%</span></span>
+          <span style="color:var(--text-dim)">· EU: <span style="color:${europeAvg>=0?'#7dde4a':'#ff9640'}">${euLabel}</span></span>
+          <span style="color:var(--text-dim)">· AS: <span style="color:${asiaAvg>=0?'#7dde4a':'#ff9640'}">${asLabel}</span></span>
+          ${reversalAdj !== 0 ? `<span style="color:${reversalAdj>0?'#00ff88':'#ff9640'}"> · ADJ: ${reversalAdj>0?'+':''}${reversalAdj.toFixed(1)}</span>` : ''}
+        `;
+      }
+
+      // Reversal-Note in Alert-Strip wenn vorhanden
+      if (reversalNote) showAlert('warning', `<strong>REVERSAL-SIGNAL:</strong> ${reversalNote}`);
     }
     
     // Signal Table
@@ -2063,11 +2135,14 @@ function startCountdown() {
 // via Yahoo Finance allorigins proxy
 // ============================
 const GLOBAL_MARKETS = [
-  { sym: '^N225',   name: 'Nikkei 225',  flag: '🇯🇵', tz: 'Asia/Tokyo',   region: 'asia'   },
-  { sym: '^HSI',    name: 'Hang Seng',   flag: '🇭🇰', tz: 'Asia/HK',      region: 'asia'   },
-  { sym: '^FTSE',   name: 'FTSE 100',    flag: '🇬🇧', tz: 'Europe/London',region: 'europe' },
-  { sym: '^GDAXI',  name: 'DAX',         flag: '🇩🇪', tz: 'Europe/Berlin',region: 'europe' },
+  { sym: '^N225',   name: 'Nikkei 225',  flag: '🇯🇵', region: 'asia'   },
+  { sym: '^HSI',    name: 'Hang Seng',   flag: '🇭🇰', region: 'asia'   },
+  { sym: '^FTSE',   name: 'FTSE 100',    flag: '🇬🇧', region: 'europe' },
+  { sym: '^GDAXI',  name: 'DAX',         flag: '🇩🇪', region: 'europe' },
 ];
+
+// Globaler Cache für Global Market Daten → fließt in Sentiment Score ein
+let globalMarketsCache = []; // Array von { name, region, changePct }
 
 async function fetchMarketIndex(sym) {
   const data = await fetchSpotPrice(sym);
@@ -2088,6 +2163,11 @@ async function updateGlobalMarkets() {
       .map(r => r.value);
 
     if (!markets.length) throw new Error('Keine Marktdaten');
+
+    // Cache für Sentiment Score aktualisieren
+    globalMarketsCache = markets.map(m => ({
+      name: m.name, region: m.region, changePct: m.changePct
+    }));
 
     // Timestamp
     document.getElementById('globalMarketsTimestamp').textContent =
