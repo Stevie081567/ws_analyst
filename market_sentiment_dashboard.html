@@ -987,6 +987,32 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════
+       ROW 2.5: GLOBAL MARKETS – Asien + Europa Early Indicator
+       ═══════════════════════════════════════════════════════ -->
+  <div id="globalMarketsRow" style="margin-bottom:16px">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
+
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-family:'Unbounded',sans-serif;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-muted)">🌏 Global Markets</span>
+          <span style="font-size:9px;color:var(--text-dim);letter-spacing:0.05em">vs. Vortag · Yahoo Finance</span>
+        </div>
+        <div style="font-size:9px;color:var(--text-dim)" id="globalMarketsTimestamp">Wird geladen...</div>
+      </div>
+
+      <!-- Markets Grid -->
+      <div id="globalMarketsGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">
+        <!-- Wird via JS befüllt -->
+        <div style="font-size:10px;color:var(--text-muted)">Märkte werden geladen...</div>
+      </div>
+
+      <!-- Signal -->
+      <div id="globalMarketsSignal" style="margin-top:10px;padding:8px 10px;background:var(--surface2);border-radius:4px;font-size:10px;color:var(--text-muted);line-height:1.5"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
        ROW 3: SEKTOR ROTATION – 3 Blöcke nebeneinander
        ═══════════════════════════════════════════════════════ -->
   <div class="row3-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">
@@ -2032,7 +2058,107 @@ function startCountdown() {
 }
 
 // ============================
-// ÖL SPOT PREISE (WTI + Brent Futures via Yahoo)
+// GLOBAL MARKETS
+// Nikkei, Hang Seng, FTSE, DAX
+// via Yahoo Finance allorigins proxy
+// ============================
+const GLOBAL_MARKETS = [
+  { sym: '^N225',   name: 'Nikkei 225',  flag: '🇯🇵', tz: 'Asia/Tokyo',   region: 'asia'   },
+  { sym: '^HSI',    name: 'Hang Seng',   flag: '🇭🇰', tz: 'Asia/HK',      region: 'asia'   },
+  { sym: '^FTSE',   name: 'FTSE 100',    flag: '🇬🇧', tz: 'Europe/London',region: 'europe' },
+  { sym: '^GDAXI',  name: 'DAX',         flag: '🇩🇪', tz: 'Europe/Berlin',region: 'europe' },
+];
+
+async function fetchMarketIndex(sym) {
+  const data = await fetchSpotPrice(sym);
+  return data;
+}
+
+async function updateGlobalMarkets() {
+  try {
+    const results = await Promise.allSettled(
+      GLOBAL_MARKETS.map(async m => {
+        const data = await fetchMarketIndex(m.sym);
+        return { ...m, ...data };
+      })
+    );
+
+    const markets = results
+      .filter(r => r.status === 'fulfilled')
+      .map(r => r.value);
+
+    if (!markets.length) throw new Error('Keine Marktdaten');
+
+    // Timestamp
+    document.getElementById('globalMarketsTimestamp').textContent =
+      `Stand: ${new Date().toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'})} Uhr`;
+
+    // Grid rendern
+    const grid = document.getElementById('globalMarketsGrid');
+    grid.innerHTML = markets.map(m => {
+      const isUp   = m.changePct >= 0;
+      const sign   = isUp ? '+' : '';
+      const color  = Math.abs(m.changePct) >= 1.5 ? (isUp ? '#00ff88' : '#ff3358')
+                   : Math.abs(m.changePct) >= 0.5  ? (isUp ? '#7dde4a' : '#ff9640')
+                   :                                  'var(--text-muted)';
+      const arrow  = isUp ? '▲' : '▼';
+      const barW   = Math.min(100, Math.abs(m.changePct) * 20);
+      const barDir = isUp ? 'right' : 'left';
+
+      // Markt-Status (offen/geschlossen) basierend auf aktueller UTC-Zeit
+      const now    = new Date();
+      const utcH   = now.getUTCHours();
+      let   status = '', statusColor = 'var(--text-dim)';
+
+      if (m.region === 'asia') {
+        // Asien: ca. 00:00–09:00 UTC offen
+        if (utcH >= 0 && utcH < 9) { status = '● OFFEN'; statusColor = 'var(--accent-green)'; }
+        else                        { status = '○ GESCHL.'; }
+      } else {
+        // Europa: ca. 07:00–17:30 UTC offen
+        if (utcH >= 7 && utcH < 18) { status = '● OFFEN'; statusColor = 'var(--accent-green)'; }
+        else                         { status = '○ GESCHL.'; }
+      }
+
+      return `<div style="background:var(--surface2);border:1px solid ${isUp?'rgba(0,255,136,0.15)':'rgba(255,51,88,0.15)'};border-radius:6px;padding:10px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+          <div>
+            <div style="font-size:10px;font-weight:600;color:var(--text)">${m.flag} ${m.name}</div>
+            <div style="font-size:8px;letter-spacing:0.1em;color:${statusColor};margin-top:2px">${status}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-family:'Unbounded',sans-serif;font-size:15px;font-weight:700;color:${color}">${sign}${m.changePct.toFixed(2)}%</div>
+            <div style="font-size:9px;color:var(--text-muted);margin-top:1px">${arrow} ${sign}${m.change.toFixed(0)}</div>
+          </div>
+        </div>
+        <!-- Mini-Bar -->
+        <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;position:relative">
+          <div style="position:absolute;${isUp?'left:50%':'right:50%'};width:${barW/2}%;height:100%;background:${color};border-radius:2px"></div>
+        </div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">${m.current.toLocaleString('de-DE', {maximumFractionDigits:0})}</div>
+      </div>`;
+    }).join('');
+
+    // Composite Signal
+    const validMarkets = markets.filter(m => m.changePct !== undefined);
+    const avgChange    = validMarkets.reduce((s, m) => s + m.changePct, 0) / validMarkets.length;
+    const asiaAvg      = markets.filter(m => m.region === 'asia').reduce((s,m,_,a) => s + m.changePct/a.length, 0);
+    const europeAvg    = markets.filter(m => m.region === 'europe').reduce((s,m,_,a) => s + m.changePct/a.length, 0);
+
+    let signal = '';
+    if (avgChange >= 1.0)       signal = `🟢 <strong style="color:#00ff88">GLOBAL RISK-ON</strong> · Asien +${asiaAvg.toFixed(2)}% · Europa ${europeAvg>=0?'+':''}${europeAvg.toFixed(2)}% → Positive US Pre-Market-Stimmung erwartet`;
+    else if (avgChange >= 0.3)  signal = `🟡 <strong style="color:#7dde4a">LEICHT POSITIV</strong> · Gemischtes Bild · Asien ${asiaAvg>=0?'+':''}${asiaAvg.toFixed(2)}% · Europa ${europeAvg>=0?'+':''}${europeAvg.toFixed(2)}%`;
+    else if (avgChange >= -0.3) signal = `⬜ <strong style="color:var(--text-muted)">NEUTRAL</strong> · Keine klare Richtung aus globalen Märkten`;
+    else if (avgChange >= -1.0) signal = `🟠 <strong style="color:#ff9640">LEICHT NEGATIV</strong> · Asien ${asiaAvg>=0?'+':''}${asiaAvg.toFixed(2)}% · Europa ${europeAvg>=0?'+':''}${europeAvg.toFixed(2)}% → Vorsicht bei US-Open`;
+    else                        signal = `🔴 <strong style="color:#ff3358">GLOBAL RISK-OFF</strong> · Deutliche Schwäche aus Asien/Europa → Defensive Ausrichtung für US-Open`;
+
+    document.getElementById('globalMarketsSignal').innerHTML = signal;
+
+  } catch(e) {
+    const grid = document.getElementById('globalMarketsGrid');
+    if (grid) grid.innerHTML = `<span style="font-size:10px;color:var(--accent-red)">Marktdaten: ${e.message}</span>`;
+  }
+}
 // CL=F = WTI Crude, BZ=F = Brent Crude
 // ============================
 async function updateOilPanel() {
@@ -2084,10 +2210,11 @@ async function refreshAll() {
   const now = new Date();
   document.getElementById('lastUpdate').textContent = `Letztes Update: ${now.toLocaleTimeString('de-DE')}`;
 
-  // Immer: F&G + Yields + Öl (öffentliche APIs, kein Key nötig)
+  // Immer: F&G + Yields + Öl + Global Markets (öffentliche APIs, kein Key nötig)
   await updateFearGreed();
-  updateYieldPanel();  // parallel
-  updateOilPanel();    // parallel
+  updateYieldPanel();       // parallel
+  updateOilPanel();         // parallel
+  updateGlobalMarkets();    // parallel
 
   if (connected) {
     await updateSentimentMetrics();
