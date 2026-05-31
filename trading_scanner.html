@@ -118,8 +118,24 @@ body::before {
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
+  transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
 }
-.btn-scan:active { opacity: 0.8; }
+.btn-scan:active  { transform: scale(0.96); }
+.btn-scan.scanning {
+  background: var(--amber) !important;
+  color: var(--bg) !important;
+  animation: btnPulse 0.8s ease-in-out infinite;
+  cursor: wait;
+}
+.btn-scan.done {
+  background: #005a30 !important;
+  color: #00ff88 !important;
+  box-shadow: 0 0 10px rgba(0,255,136,0.3);
+}
+@keyframes btnPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255,184,0,0.5); }
+  50%       { opacity: 0.85; box-shadow: 0 0 0 6px rgba(255,184,0,0); }
+}
 
 /* ── FILTER BAR ── */
 .filter-bar {
@@ -528,6 +544,7 @@ body::before {
     </div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <div style="font-size:9px;color:var(--muted)">Letzte Aktualisierung: <span id="lastUpdate" style="color:var(--text)">--</span></div>
+      <div id="rthBadge" style="font-size:9px;letter-spacing:0.08em;padding:2px 8px;border-radius:3px;background:var(--surface2);border:1px solid var(--border);color:var(--muted)">⏳ RTH...</div>
       <div id="savedBadge" style="display:none;font-size:9px;color:var(--green);letter-spacing:0.1em">✓ KEYS GESPEICHERT</div>
       <div id="pwaHint" style="display:none;font-size:9px;color:var(--amber)">□ Teilen → Zum Home-Bildschirm</div>
     </div>
@@ -554,7 +571,7 @@ body::before {
       <span class="cfg-label">Trading Modus</span>
       <select id="tradeMode" class="cfg-select">
         <option value="swing">📈 Swing (2-10d)</option>
-        <option value="day">⚡ Day Trading</option>
+        <option value="day" selected>⚡ Day Trading</option>
       </select>
     </div>
     <div class="cfg-field" style="max-width:120px">
@@ -804,8 +821,70 @@ async function fetchVIX() {
 }
 
 // ═══════════════════════════════════════════════
-// SCORING ENGINE – DUAL MODE
+// RTH DETECTION (Regular Trading Hours)
+// 09:30–16:00 ET = 15:30–22:00 MEZ (Sommer) / 16:30–23:00 (Winter)
 // ═══════════════════════════════════════════════
+function isRTH() {
+  const now = new Date();
+  // UTC-Zeit → ET: Sommer UTC-4, Winter UTC-5
+  const jan = new Date(now.getFullYear(), 0, 1);
+  const jul = new Date(now.getFullYear(), 6, 1);
+  const stdOffset = Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
+  const isDST = now.getTimezoneOffset() < stdOffset;
+  const etOffset = isDST ? 4 : 5; // Stunden hinter UTC
+
+  const etHour = (now.getUTCHours() - etOffset + 24) % 24;
+  const etMin  = now.getUTCMinutes();
+  const etTime = etHour * 60 + etMin;
+
+  const open   = 9 * 60 + 30;   // 09:30
+  const close  = 16 * 60;       // 16:00
+  const dow    = now.getUTCDay();
+
+  return dow >= 1 && dow <= 5 && etTime >= open && etTime < close;
+}
+
+// ═══════════════════════════════════════════════
+// ALPACA SNAPSHOTS (Echtzeit-Intraday während RTH)
+// Liefert: aktueller Preis, heutiges Volume, Tagesrange
+// ═══════════════════════════════════════════════
+let snapshotCache = {};   // Symbol → snapshot data
+
+async function getSnapshots(symbols) {
+  if (!symbols.length) return {};
+  const syms = symbols.join(',');
+  const data = await alpacaFetch(`/v2/stocks/snapshots?symbols=${syms}&feed=iex`);
+  return data || {};
+}
+
+// Merged data: Snapshot (wenn RTH) über Daily Bars legen
+function mergeSnapshotWithBars(sym, bars, snapshot) {
+  if (!snapshot || !isRTH()) return null; // Außerhalb RTH → nur Daily Bars
+
+  const snap     = snapshot[sym];
+  if (!snap) return null;
+
+  const dt  = snap.dailyBar;    // heutiger unvollständiger Bar
+  const lat = snap.latestTrade; // letzter Trade
+  const lq  = snap.latestQuote; // letzter Quote
+
+  if (!dt && !lat) return null;
+
+  const price     = lat?.p ?? dt?.c ?? 0;
+  const todayOpen = dt?.o ?? price;
+  const todayHigh = dt?.h ?? price;
+  const todayLow  = dt?.l ?? price;
+  const todayVol  = dt?.v ?? 0;
+  const prevClose = snap.prevDailyBar?.c ?? (bars.length >= 2 ? bars[bars.length-2].c : price);
+
+  return {
+    price, prevClose,
+    todayOpen, todayHigh, todayLow, todayVol,
+    change:    price - prevClose,
+    changePct: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
+    isIntraday: true,
+  };
+}
 
 // Positionsgröße für Liquiditäts-Berechnung
 const POSITION_SIZE = 6000; // $6.000 Mitte 5k-7k
@@ -951,11 +1030,20 @@ function scoreSwing(sym, bars, spyBars) {
 function scoreDay(sym, bars, spyBars) {
   if (!bars || bars.length < 5) return null;
 
-  const last      = bars[bars.length - 1];
-  const prev      = bars[bars.length - 2];
-  const price     = last.c;
-  const prevClose = prev.c;
-  const changePct = ((price - prevClose) / prevClose) * 100;
+  // Snapshot-Daten bevorzugen wenn verfügbar (RTH)
+  const snap    = snapshotCache[sym] ? mergeSnapshotWithBars(sym, bars, snapshotCache) : null;
+  const lastBar = bars[bars.length - 1];
+  const prevBar = bars[bars.length - 2];
+
+  const price     = snap ? snap.price     : lastBar.c;
+  const prevClose = snap ? snap.prevClose : prevBar.c;
+  const changePct = snap ? snap.changePct : ((lastBar.c - prevBar.c) / prevBar.c) * 100;
+
+  // Heutiges Volume: Snapshot wenn RTH, sonst gestriger Bar
+  const todayVol  = snap ? snap.todayVol  : lastBar.v;
+  // Tagesrange für Intraday-Momentum
+  const todayHigh = snap ? snap.todayHigh : lastBar.h;
+  const todayLow  = snap ? snap.todayLow  : lastBar.l;
 
   // 1. Dollar Volume (0-30) – Day: min $50M/Tag
   let liqScore = 0, liqSignal = false;
@@ -971,11 +1059,10 @@ function scoreDay(sym, bars, spyBars) {
     else                  { liqScore = 0; }
   }
 
-  // 2. Relative Volume heute (0-25) – erhöhtes Interesse = Bewegung
+  // 2. Relative Volume heute (0-25)
   let rvolScore = 0, rvolSignal = false;
-  const avgVol  = calcAvgVolume(bars, 20);
-  const todayVol= last.v || 0;
-  const volRatio= avgVol && avgVol > 0 ? todayVol / avgVol : null;
+  const avgVol   = calcAvgVolume(bars, 20);
+  const volRatio = avgVol && avgVol > 0 ? todayVol / avgVol : null;
   if (volRatio) {
     if      (volRatio >= 3.0) { rvolScore = 25; rvolSignal = true; }
     else if (volRatio >= 2.0) { rvolScore = 20; rvolSignal = true; }
@@ -983,7 +1070,7 @@ function scoreDay(sym, bars, spyBars) {
     else if (volRatio >= 1.2) { rvolScore = 6; }
   }
 
-  // 3. ATR % – Volatilitätspotenzial (0-25)
+  // 3. ATR % (0-25)
   let atrScore = 0, atrSignal = false;
   const atr    = calcATR(bars);
   const atrPct = atr ? (atr / price) * 100 : null;
@@ -995,20 +1082,19 @@ function scoreDay(sym, bars, spyBars) {
   }
 
   // 4. Intraday-Momentum (0-20) – Close-Position im Tagesrange
+  // Mit Snapshot: echte heutige Position; ohne: gestern's Bar
   let intScore = 0, intSignal = false;
-  const intMom = calcIntradayMom(last);
+  const range = todayHigh - todayLow;
+  const intMom = range > 0 ? (price - todayLow) / range : null;
   if (intMom !== null) {
-    if      (intMom >= 0.8) { intScore = 20; intSignal = true; } // nahe Tageshoch
+    if      (intMom >= 0.8) { intScore = 20; intSignal = true; }
     else if (intMom >= 0.6) { intScore = 15; intSignal = true; }
     else if (intMom >= 0.4) { intScore = 8; }
     else if (intMom >= 0.2) { intScore = 3; }
-    // < 0.2 = nahe Tagestief → schwaches Signal
   }
 
   const avgDolV = avgDV || 0;
   const posPct  = avgDolV > 0 ? (POSITION_SIZE / avgDolV) * 100 : null;
-
-  // MA für Karte
   const ma10 = calcMA(bars, 10);
   const ma20 = calcMA(bars, 20);
   const ma50 = calcMA(bars, Math.min(50, bars.length));
@@ -1020,12 +1106,11 @@ function scoreDay(sym, bars, spyBars) {
     liqSignal, rvolSignal, atrSignal, intSignal,
     ma10, ma20, ma50, atr, atrPct, avgVol, todayVol, volRatio,
     avgDollarVol: avgDolV, posPct,
-    // Day-Trade R/R: 1×ATR Stop, 2×ATR Target (eng, schnell)
     stopLoss: atr ? price - 1.0 * atr : null,
     target:   atr ? price + 2.0 * atr : null,
     vixWarn:  vixLevel && vixLevel > 25,
     liqWarn:  avgDV && avgDV < MIN_DV_DAY,
-    // Kein momSignal/trendSignal im Day-Mode → für Filterlogik
+    isIntraday: !!snap,
     momSignal: intSignal,
     volSignal: rvolSignal,
     trendSignal: atrSignal,
@@ -1480,6 +1565,9 @@ async function runScan() {
     return;
   }
 
+  const btn = document.getElementById('btnScan');
+  if (btn) { btn.classList.add('scanning'); btn.textContent = '⟳ SCANNING...'; btn.disabled = true; }
+
   showLoading('Verbinde mit Alpaca...');
 
   // Sofort Skeletons zeigen – Anzahl basiert auf Top N × Sektoren (geschätzt)
@@ -1542,11 +1630,27 @@ async function runScan() {
       Object.assign(cachedBars, bars);
     }
 
-    // Scoring
+    // Scoring – bei Day Trading: Snapshots laden wenn RTH
     setProgress(88, 'Berechne Scores...');
     const spyBars      = cachedBars['SPY'] || [];
-    const candidateMap = {};
+    snapshotCache      = {};  // reset
 
+    if (mode === 'day' && isRTH()) {
+      setProgress(85, '⚡ RTH aktiv – Intraday-Snapshots laden...');
+      try {
+        const allSymArr = Object.values(cachedSectorSymbols).flat();
+        // Snapshots in Batches à 100
+        for (let i = 0; i < allSymArr.length; i += 100) {
+          const batch = allSymArr.slice(i, i + 100);
+          const snaps = await getSnapshots(batch);
+          Object.assign(snapshotCache, snaps);
+        }
+      } catch(e) {
+        console.warn('Snapshots nicht verfügbar:', e.message);
+      }
+    }
+
+    const candidateMap = {};
     for (const [sector, syms] of Object.entries(cachedSectorSymbols)) {
       for (const sym of syms) {
         const bars   = cachedBars[sym];
@@ -1566,8 +1670,22 @@ async function runScan() {
     hideProgress();
     renderCandidates(allCandidates);
 
+    // Button: Done-Zustand kurz anzeigen dann zurück
+    if (btn) {
+      btn.classList.remove('scanning');
+      btn.classList.add('done');
+      const rthNote = mode === 'day' ? (isRTH() ? ' · RTH ✓' : ' · Post-RTH') : '';
+      btn.textContent = `✓ FERTIG${rthNote}`;
+      btn.disabled = false;
+      setTimeout(() => {
+        btn.classList.remove('done');
+        btn.textContent = '▶ SCAN';
+      }, 3000);
+    }
+
   } catch(e) {
     hideLoading();
+    if (btn) { btn.classList.remove('scanning'); btn.textContent = '▶ SCAN'; btn.disabled = false; }
     document.getElementById('connDot').style.background = 'var(--red)';
     document.getElementById('connStatus').textContent = `Fehler: ${e.message}`;
     document.getElementById('candidatesGrid').innerHTML = `
@@ -1726,6 +1844,20 @@ window.addEventListener('load', () => {
   document.querySelectorAll('.chip').forEach(chip => {
     chip.addEventListener('click', () => setFilter(chip.dataset.filter));
   });
+
+  // RTH Badge aktualisieren
+  const rthBadge = document.getElementById('rthBadge');
+  if (rthBadge) {
+    if (isRTH()) {
+      rthBadge.textContent = '🟢 MARKT OFFEN · Intraday-Daten';
+      rthBadge.style.color       = 'var(--green)';
+      rthBadge.style.borderColor = 'rgba(0,255,136,0.3)';
+      rthBadge.style.background  = 'rgba(0,255,136,0.07)';
+    } else {
+      rthBadge.textContent = '⚫ MARKT GESCHLOSSEN · Daily Bars';
+      rthBadge.style.color       = 'var(--muted)';
+    }
+  }
 
   // Sentiment Bridge initialisieren (liest localStorage vom Sentiment Dashboard)
   initBridgeUI();
