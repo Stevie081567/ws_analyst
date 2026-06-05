@@ -1075,6 +1075,13 @@
     </div>
     <div>SENTIMENT.SCAN v3.0 · Auto-Refresh · Alpaca + Yahoo Finance</div>
   </div>
+  <!-- FETCH STATUS -->
+  <div style="padding:6px 0 8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+    <span style="font-size:8px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-dim)">Datenquellen:</span>
+    <div id="fetchStatusBar" style="display:flex;flex-wrap:wrap;gap:8px;font-family:'DM Mono',monospace">
+      <span style="color:var(--text-dim);font-size:9px">Noch keine Daten geladen</span>
+    </div>
+  </div>
 
 </div>
 
@@ -2110,12 +2117,92 @@ function showAlert(type, msg) {
 }
 
 // ============================
-// COUNTDOWN TIMER
+// FETCH STATUS TRACKER
+// Zeigt welche Datenquellen erfolgreich geladen wurden
+// ============================
+const fetchStatus = {};
+
+function setFetchStatus(key, status, detail='') {
+  fetchStatus[key] = { status, detail, time: new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}) };
+  renderFetchStatus();
+}
+
+function renderFetchStatus() {
+  const el = document.getElementById('fetchStatusBar');
+  if (!el) return;
+  const icons = { ok:'✓', error:'✗', loading:'⟳', timeout:'⏱' };
+  const colors = { ok:'var(--accent-green)', error:'var(--accent-red)', loading:'var(--accent-amber)', timeout:'var(--accent-amber)' };
+  const items = Object.entries(fetchStatus).map(([k,v]) => {
+    const icon  = icons[v.status]  || '?';
+    const color = colors[v.status] || 'var(--text-muted)';
+    return `<span title="${k}: ${v.detail||v.status} (${v.time})" style="color:${color};cursor:help;font-size:9px">${icon} ${k}</span>`;
+  }).join('<span style="color:var(--border)"> · </span>');
+  el.innerHTML = items || '<span style="color:var(--text-dim)">Keine Daten</span>';
+}
+
+// Fetch mit Timeout-Wrapper
+async function fetchWithTimeout(promise, ms=20000, name='') {
+  const timeout = new Promise((_,reject) =>
+    setTimeout(() => reject(new Error(`Timeout nach ${ms/1000}s`)), ms)
+  );
+  return Promise.race([promise, timeout]);
+}
+
+// ============================
+// FULL REFRESH
+// ============================
+async function refreshAll() {
+  const now = new Date();
+  document.getElementById('lastUpdate').textContent = `Letztes Update: ${now.toLocaleTimeString('de-DE')}`;
+
+  // F&G (await – kritisch für Score)
+  setFetchStatus('F&G', 'loading');
+  try {
+    await updateFearGreed();
+    setFetchStatus('F&G', 'ok');
+  } catch(e) { setFetchStatus('F&G', 'error', e.message); }
+
+  // Yields, Öl, Global Markets parallel mit Timeout
+  const parallelTasks = [
+    fetchWithTimeout(updateYieldPanel(), 20000, 'Yields')
+      .then(() => setFetchStatus('Yields', 'ok'))
+      .catch(e => setFetchStatus('Yields', e.message.includes('Timeout') ? 'timeout' : 'error', e.message)),
+
+    fetchWithTimeout(updateOilPanel(), 20000, 'Öl')
+      .then(() => setFetchStatus('Öl', 'ok'))
+      .catch(e => setFetchStatus('Öl', e.message.includes('Timeout') ? 'timeout' : 'error', e.message)),
+
+    fetchWithTimeout(updateGlobalMarkets(), 20000, 'Märkte')
+      .then(() => setFetchStatus('Märkte', 'ok'))
+      .catch(e => setFetchStatus('Märkte', e.message.includes('Timeout') ? 'timeout' : 'error', e.message)),
+  ];
+
+  // Parallel starten aber nicht auf alle warten
+  Promise.all(parallelTasks);
+
+  if (connected) {
+    setFetchStatus('Alpaca', 'loading');
+    try {
+      await updateSentimentMetrics();
+      await updateVIX();
+      await updateBreadth();
+      await updateSectors();
+      setFetchStatus('Alpaca', 'ok', 'Sentiment + VIX + Breadth + Sektoren');
+    } catch(e) { setFetchStatus('Alpaca', 'error', e.message); }
+  }
+}
+
+// ============================
+// COUNTDOWN TIMER – mit sauberem Reset
 // ============================
 function startCountdown() {
-  if (countdownInterval) clearInterval(countdownInterval);
+  // Bestehenden Timer immer stoppen bevor neu gestartet
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
   countdownSec = refreshSeconds;
-  
+
   countdownInterval = setInterval(() => {
     countdownSec--;
     if (countdownSec < 0) {
@@ -2124,8 +2211,10 @@ function startCountdown() {
     }
     const mins = Math.floor(countdownSec / 60);
     const secs = countdownSec % 60;
-    document.getElementById('countdownText').textContent = `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
-    document.getElementById('countdownFill').style.width = (countdownSec / refreshSeconds * 100) + '%';
+    document.getElementById('countdownText').textContent =
+      `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+    document.getElementById('countdownFill').style.width =
+      (countdownSec / refreshSeconds * 100) + '%';
   }, 1000);
 }
 
@@ -2406,15 +2495,20 @@ async function initDashboard() {
 // AUTO-START: Config laden + F&G + ggf. Auto-Connect
 // ============================
 window.addEventListener('load', async () => {
-  // Gespeicherte Config ins UI laden
   const cfg = loadConfig();
   applyConfigToUI(cfg);
 
-  // F&G sofort laden (kein Key nötig)
-  await updateFearGreed();
+  // F&G + öffentliche Daten sofort laden
+  setFetchStatus('F&G', 'loading');
+  try {
+    await updateFearGreed();
+    setFetchStatus('F&G', 'ok');
+  } catch(e) { setFetchStatus('F&G', 'error', e.message); }
+
+  // Countdown starten (einmalig)
   startCountdown();
 
-  // Wenn Keys vorhanden → automatisch verbinden
+  // Wenn Keys vorhanden → automatisch verbinden (startet Countdown neu = Timer-Reset)
   if (cfg && cfg.key && cfg.secret) {
     showAlert('info', '<strong>🔄 AUTO-CONNECT:</strong> Gespeicherte API-Keys gefunden – verbinde automatisch...');
     await initDashboard();
