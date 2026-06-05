@@ -1400,6 +1400,11 @@ function scoreDay(sym, bars, spyBars) {
 // ═══════════════════════════════════════════════
 // RATING
 // ═══════════════════════════════════════════════
+function scoreCandidate(sym, bars, spyBars, mode) {
+  mode = mode || 'swing';
+  return mode === 'day' ? scoreDay(sym, bars, spyBars) : scoreSwing(sym, bars, spyBars);
+}
+
 function getRating(score) {
   const thSB = parseInt(document.getElementById('thStrongBuy').value) || 75;
   const thB  = parseInt(document.getElementById('thBuy').value)       || 55;
