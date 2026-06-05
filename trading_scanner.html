@@ -644,16 +644,33 @@ body::before {
 
   </div>
 
-  <!-- FILTER CHIPS -->
+  <!-- LONG / SHORT TABS -->
+  <div style="display:flex;gap:0;margin-bottom:0;border-bottom:1px solid var(--border)">
+    <button id="tabLong" class="dir-tab active" onclick="setDirection('long')"
+      style="display:flex;align-items:center;gap:7px;padding:10px 20px;font-family:'DM Mono',monospace;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;border:none;border-bottom:2px solid var(--green);background:rgba(0,255,136,0.06);color:var(--green);cursor:pointer;transition:all 0.15s">
+      ▲ LONG <span id="longCount" style="font-size:9px;background:rgba(0,255,136,0.15);padding:1px 6px;border-radius:10px">--</span>
+    </button>
+    <button id="tabShort" class="dir-tab" onclick="setDirection('short')"
+      style="display:flex;align-items:center;gap:7px;padding:10px 20px;font-family:'DM Mono',monospace;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;border:none;border-bottom:2px solid transparent;background:transparent;color:var(--muted);cursor:pointer;transition:all 0.15s">
+      ▼ SHORT <span id="shortCount" style="font-size:9px;background:var(--surface2);padding:1px 6px;border-radius:10px">--</span>
+    </button>
+    <div style="flex:1;border-bottom:2px solid transparent"></div>
+    <div id="shortWarning" style="display:none;align-items:center;gap:6px;padding:0 14px;font-size:9px;color:var(--amber)">
+      ⚠ Nur ETB-Werte shorten
+    </div>
+  </div>
+
+  <!-- FILTER CHIPS (kontextuell) -->
   <div class="filter-bar">
     <span class="filter-label">Filter:</span>
     <div class="chip active" data-filter="all">Alle</div>
-    <div class="chip" data-filter="strong-buy">⚡ Strong Buy</div>
-    <div class="chip" data-filter="buy">↑ Buy</div>
+    <div class="chip long-only" data-filter="strong-buy">⚡ Strong Buy</div>
+    <div class="chip long-only" data-filter="buy">↑ Buy</div>
     <div class="chip" data-filter="watch">◆ Watch</div>
     <div class="chip" data-filter="momentum">Momentum</div>
     <div class="chip" data-filter="volume">Volume</div>
     <div class="chip" data-filter="trend">Trend</div>
+    <div class="chip short-only" data-filter="etb-only" style="display:none">✓ ETB only</div>
   </div>
 
   <!-- SCORE THRESHOLDS + PREIS-FILTER -->
@@ -866,7 +883,82 @@ let DATA_BASE = 'https://data.alpaca.markets';
 let ALPACA_KEY = '';
 let ALPACA_SECRET = '';
 let allCandidates = [];
-let currentFilter = 'all';
+let currentFilter    = 'all';
+let currentDirection = 'long'; // 'long' | 'short'
+
+// ═══════════════════════════════════════════════
+// SHORT SCORING – invertierte Logik
+// Negatives Momentum + Volume + unter MAs + RS-Weakness
+// ═══════════════════════════════════════════════
+function scoreShort(sym, bars, spyBars) {
+  if (!bars || bars.length < 6) return null;
+  const last = bars[bars.length-1], prev = bars[bars.length-2];
+  const price = last.c, prevClose = prev.c;
+  const pMin = parseFloat(document.getElementById('priceMin')?.value)||5;
+  const pMax = parseFloat(document.getElementById('priceMax')?.value)||500;
+  if (price < pMin || price > pMax) return null;
+  const changePct = ((price-prevClose)/prevClose)*100;
+
+  // 1. Neg. Momentum (0-25)
+  let momScore=0, momSignal=false;
+  if      (changePct<=-3.0){momScore=25;momSignal=true;}
+  else if (changePct<=-2.0){momScore=20;momSignal=true;}
+  else if (changePct<=-1.0){momScore=15;momSignal=true;}
+  else if (changePct<=-0.5){momScore=8;}
+  else if (changePct<0)    {momScore=3;}
+
+  // 2. Volume Surge bei negativem Kurs (0-25)
+  let volScore=0, volSignal=false;
+  const avgVol  = calcAvgVolume(bars,20);
+  const todayVol= last.v||0;
+  const volRatio= avgVol&&avgVol>0 ? todayVol/avgVol : null;
+  if (volRatio && changePct<0){
+    if      (volRatio>=3.0){volScore=25;volSignal=true;}
+    else if (volRatio>=2.0){volScore=20;volSignal=true;}
+    else if (volRatio>=1.5){volScore=12;volSignal=true;}
+    else if (volRatio>=1.2){volScore=6;}
+  }
+
+  // 3. Unter MAs (0-25) – Short-Bestätigung
+  let trendScore=0, trendSignal=false;
+  const ma10=calcMA(bars,10), ma20=calcMA(bars,20);
+  const ma50=calcMA(bars,Math.min(50,bars.length));
+  if (ma20&&price<ma20) trendScore+=10;
+  if (ma50&&price<ma50) trendScore+=10;
+  if (ma10&&ma20&&ma10<ma20){trendScore+=5;trendSignal=true;} // bearish cross
+  if (trendScore>=15) trendSignal=true;
+
+  // 4. Relative Weakness vs SPY (0-25)
+  let rsScore=0, rsSignal=false;
+  if (spyBars&&spyBars.length>=2){
+    const spyChg=((spyBars[spyBars.length-1].c-spyBars[spyBars.length-2].c)/spyBars[spyBars.length-2].c)*100;
+    const rsDiff=changePct-spyChg;
+    if      (rsDiff<=-2.0){rsScore=25;rsSignal=true;}
+    else if (rsDiff<=-1.0){rsScore=18;rsSignal=true;}
+    else if (rsDiff<=-0.5){rsScore=10;rsSignal=true;}
+    else if (rsDiff<0)    {rsScore=4;}
+  }
+
+  const atr    = calcATR(bars,5);
+  const atrPct = atr?(atr/price)*100:null;
+  const avgDV  = calcAvgDollarVolume(bars,20);
+  const posPct = avgDV>0?(POSITION_SIZE/avgDV)*100:null;
+
+  return {
+    sym, price, prevClose, changePct,
+    mode: document.getElementById('tradeMode')?.value||'day',
+    score: momScore+volScore+trendScore+rsScore,
+    momScore, volScore, trendScore, rsScore,
+    momSignal, volSignal, trendSignal, rsSignal,
+    ma10, ma20, ma50, atr, atrPct, avgVol, todayVol, volRatio,
+    avgDollarVol: avgDV||0, posPct,
+    stopLoss: atr ? price+1.0*atr : null,  // Stop ÜBER Einstieg
+    target:   atr ? price-2.0*atr : null,  // Ziel UNTER Einstieg
+    vixWarn:  vixLevel&&vixLevel<18,        // bullisch VIX = Short-Risiko
+    liqWarn:  avgDV&&avgDV<50e6,
+    isShort:  true,
+  };
+}
 let vixLevel = null;
 
 // ═══════════════════════════════════════════════
@@ -1302,11 +1394,9 @@ function scoreDay(sym, bars, spyBars) {
   };
 }
 
-function scoreCandidate(sym, bars, spyBars, mode) {
-  mode = mode || 'swing';
-  return mode === 'day' ? scoreDay(sym, bars, spyBars) : scoreSwing(sym, bars, spyBars);
-}
-
+// ETB Score-Bonus – kontextabhängig
+// Bärisch/Sideways: höherer Bonus (Short-Opportunity)
+// Bullisch: kleiner Basis-Bonus (Flexibilität)
 // ═══════════════════════════════════════════════
 // RATING
 // ═══════════════════════════════════════════════
@@ -1334,8 +1424,47 @@ function getScoreColor(score) {
 }
 
 // ═══════════════════════════════════════════════
-// RENDER
+// ETB – Easy-To-Borrow Check via Alpaca Assets API
+// GET /v2/assets/{symbol} → easy_to_borrow flag
+// Einmalig nach Scan für alle Kandidaten, Badge bleibt beim Filtern
 // ═══════════════════════════════════════════════
+async function fetchETBStatus(symbols) {
+  // Parallel für alle Symbole – Alpaca /v2/assets/{symbol}
+  const baseUrl = document.getElementById('apiEnv')?.value === 'live'
+    ? 'https://api.alpaca.markets'
+    : 'https://paper-api.alpaca.markets';
+
+  const results = await Promise.allSettled(
+    symbols.map(async sym => {
+      const res = await fetch(`${baseUrl}/v2/assets/${sym}`, {
+        headers: {
+          'APCA-API-KEY-ID':     ALPACA_KEY,
+          'APCA-API-SECRET-KEY': ALPACA_SECRET
+        }
+      });
+      if (!res.ok) return { sym, etb: null };
+      const data = await res.json();
+      return {
+        sym,
+        etb:      data.easy_to_borrow ?? null,
+        tradable: data.tradable ?? true,
+        shortable: data.shortable ?? false,
+      };
+    })
+  );
+
+  const etbMap = {};
+  results.forEach(r => {
+    if (r.status === 'fulfilled') {
+      etbMap[r.value.sym] = {
+        etb:      r.value.etb,
+        shortable: r.value.shortable,
+        tradable:  r.value.tradable,
+      };
+    }
+  });
+  return etbMap;
+}
 function fmtDV(dv) {
   if (!dv) return '--';
   if (dv >= 1e9) return `$${(dv/1e9).toFixed(1)}B`;
@@ -1422,6 +1551,20 @@ function renderCard(c, sectorName, rank) {
 
   const aboveMa = c.ma20 && c.price > c.ma20;
 
+  // ETB Badge
+  let etbBadge = '';
+  const etbBonusLabel = c.etbBonus > 0 ? ` +${c.etbBonus}` : '';
+  if (c.etb === true) {
+    etbBadge = `<span title="Easy-To-Borrow: Short-Position möglich${c.etbBonus>0?` · Score +${c.etbBonus} (${vixLevel>25?'Bärisch':vixLevel>=18?'Sideways':'Bullisch'})`:''}"
+      style="font-size:8px;font-weight:700;letter-spacing:0.08em;padding:2px 6px;border-radius:3px;background:rgba(0,255,136,0.12);border:1px solid rgba(0,255,136,0.4);color:#00ff88;cursor:help">✓ SHORTABLE${etbBonusLabel}</span>`;
+  } else if (c.etb === false) {
+    etbBadge = `<span title="Hard-To-Borrow: Short schwierig, hohe Borrowing-Fee"
+      style="font-size:8px;font-weight:700;letter-spacing:0.08em;padding:2px 6px;border-radius:3px;background:rgba(255,51,88,0.1);border:1px solid rgba(255,51,88,0.4);color:#ff3358;cursor:help">HTB</span>`;
+  } else if (c.etb === null) {
+    etbBadge = `<span title="ETB-Status unbekannt"
+      style="font-size:8px;letter-spacing:0.05em;padding:2px 6px;border-radius:3px;background:transparent;border:1px solid var(--border);color:var(--muted)">ETB?</span>`;
+  }
+
   return `
   <div class="cand-card ${rating}" data-rating="${rating}" data-signals="${[c.momSignal?'momentum':'',c.volSignal?'volume':'',c.trendSignal?'trend':''].filter(Boolean).join(',')}">
     <div style="position:absolute;top:8px;left:10px;font-size:8px;font-weight:700;color:var(--dim);letter-spacing:0.05em">#${rank}</div>
@@ -1443,7 +1586,8 @@ function renderCard(c, sectorName, rank) {
           <div class="score-num" style="color:${color}">${c.score}</div>
         </div>
         <span class="rating-label ${rClass}">${rLabel}</span>
-      </div>
+          ${etbBadge}
+        </div>
     </div>
     <div class="card-metrics">${metrics}</div>
     <div class="card-signals">${signals||'<span style="font-size:9px;color:var(--dim)">Keine aktiven Signale</span>'}</div>
@@ -1464,48 +1608,92 @@ function renderCard(c, sectorName, rank) {
 function renderCandidates(candidates) {
   const grid = document.getElementById('candidatesGrid');
 
-  const filtered = candidates.filter(c => {
+  // Split Long vs Short
+  const longCands  = candidates.filter(c => !c.isShort);
+  const shortCands = candidates.filter(c =>  c.isShort);
+
+  // Tab counts (nur rated)
+  const lCount = longCands.filter(c=>getRating(c.score)).length;
+  const sCount = shortCands.filter(c=>getRating(c.score)&&c.etb===true).length;
+  const longEl  = document.getElementById('longCount');
+  const shortEl = document.getElementById('shortCount');
+  if (longEl)  longEl.textContent  = lCount;
+  if (shortEl) shortEl.textContent = sCount;
+
+  // Aktive Richtung
+  const pool = currentDirection === 'short' ? shortCands : longCands;
+
+  const filtered = pool.filter(c => {
     const rating = getRating(c.score);
     if (!rating) return false;
-    if (currentFilter === 'all') return true;
+    // Short: nur ETB-Werte anzeigen
+    if (currentDirection === 'short' && c.etb !== true) return false;
+    if (currentFilter === 'all')        return true;
     if (currentFilter === 'strong-buy') return rating === 'strong-buy';
     if (currentFilter === 'buy')        return rating === 'buy';
     if (currentFilter === 'watch')      return rating === 'watch';
     if (currentFilter === 'momentum')   return c.momSignal;
     if (currentFilter === 'volume')     return c.volSignal;
     if (currentFilter === 'trend')      return c.trendSignal;
+    if (currentFilter === 'etb-only')   return c.etb === true;
     return true;
   });
 
-  // Sortierung: erst nach Rating-Gruppe, dann Score absteigend
-  const ratingOrder = { 'strong-buy': 0, 'buy': 1, 'watch': 2 };
-  filtered.sort((a, b) => {
-    const ra = ratingOrder[getRating(a.score)] ?? 9;
-    const rb = ratingOrder[getRating(b.score)] ?? 9;
-    if (ra !== rb) return ra - rb;   // Rating-Gruppe zuerst
-    return b.score - a.score;        // dann Score absteigend
+  const ratingOrder = { 'strong-buy':0, 'buy':1, 'watch':2 };
+  filtered.sort((a,b)=>{
+    const ra=ratingOrder[getRating(a.score)]??9, rb=ratingOrder[getRating(b.score)]??9;
+    return ra!==rb ? ra-rb : b.score-a.score;
   });
 
   document.getElementById('countBadge').textContent = `${filtered.length} Kandidaten`;
-
   const pdfBtn = document.getElementById('btnPdf');
-  if (pdfBtn) pdfBtn.style.display = filtered.length > 0 ? 'inline-block' : 'none';
+  if (pdfBtn) pdfBtn.style.display = filtered.length>0 ? 'inline-block' : 'none';
 
   if (!filtered.length) {
-    grid.innerHTML = `<div class="empty-state">
-      <div class="empty-icon">🔍</div>
-      <div class="empty-text">Keine Kandidaten für diesen Filter.<br>Schwellen anpassen oder Filter ändern.</div>
-    </div>`;
+    const icon = currentDirection==='short' ? '📉' : '📈';
+    const msg  = currentDirection==='short'
+      ? 'Keine Short-Kandidaten mit ETB-Status.<br>Bottom-Sektoren prüfen oder Schwellen anpassen.'
+      : 'Keine Long-Kandidaten.<br>Schwellen anpassen oder Filter ändern.';
+    grid.innerHTML = `<div class="empty-state"><div class="empty-icon">${icon}</div><div class="empty-text">${msg}</div></div>`;
     return;
   }
 
-  // Rank-Nummer übergeben für Anzeige auf der Karte
-  grid.innerHTML = filtered.map((c, i) => renderCard(c, c.sectorName, i + 1)).join('');
+  grid.innerHTML = filtered.map((c,i) => renderCard(c, c.sectorName, i+1)).join('');
 }
 
 // ═══════════════════════════════════════════════
-// FILTER
+// DIRECTION – Long / Short Tab
 // ═══════════════════════════════════════════════
+function setDirection(dir) {
+  currentDirection = dir;
+  const tabL = document.getElementById('tabLong');
+  const tabS = document.getElementById('tabShort');
+  const warn = document.getElementById('shortWarning');
+  const etbChip = document.querySelector('[data-filter="etb-only"]');
+
+  if (dir === 'long') {
+    tabL.style.borderBottomColor = 'var(--green)';
+    tabL.style.background        = 'rgba(0,255,136,0.06)';
+    tabL.style.color             = 'var(--green)';
+    tabS.style.borderBottomColor = 'transparent';
+    tabS.style.background        = 'transparent';
+    tabS.style.color             = 'var(--muted)';
+    if (warn) warn.style.display = 'none';
+    if (etbChip) etbChip.style.display = 'none';
+  } else {
+    tabS.style.borderBottomColor = '#ff3358';
+    tabS.style.background        = 'rgba(255,51,88,0.06)';
+    tabS.style.color             = '#ff3358';
+    tabL.style.borderBottomColor = 'transparent';
+    tabL.style.background        = 'transparent';
+    tabL.style.color             = 'var(--muted)';
+    if (warn) warn.style.display = 'flex';
+    if (etbChip) etbChip.style.display = 'inline-flex';
+  }
+  currentFilter = 'all';
+  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.filter === 'all'));
+  renderCandidates(allCandidates);
+}
 function setFilter(f) {
   currentFilter = f;
   document.querySelectorAll('.chip').forEach(c => {
@@ -1927,6 +2115,90 @@ async function runScan() {
 
     setProgress(98, 'Rendern...');
     allCandidates = Object.values(candidateMap);
+
+    // ── SHORT-KANDIDATEN aus Bottom-Sektoren ──
+    // Bottom-Sektoren = negative oder schwächste Sektoren aus Bridge
+    try {
+      const raw = localStorage.getItem('ws_sector_rankings');
+      if (raw) {
+        const bridgeParsed = JSON.parse(raw);
+        const bottomSectors = [...bridgeParsed.data]
+          .sort((a,b) => a.pct - b.pct)  // aufsteigend = schwächste zuerst
+          .slice(0, 3)                    // Bottom 3
+          .map(s => ETF_TO_DAY[s.sym])
+          .filter(Boolean);
+
+        // Short-Universum: Bottom-Sektoren aus DAY_UNIVERSE
+        const shortUniverse = {};
+        bottomSectors.forEach(key => {
+          if (DAY_UNIVERSE[key]) shortUniverse[key] = DAY_UNIVERSE[key];
+        });
+
+        // Wenn keine Bridge → alle Sektoren als Short-Pool
+        const shortPool = Object.keys(shortUniverse).length > 0
+          ? shortUniverse : DAY_UNIVERSE;
+
+        // Short-Symbole sammeln
+        const shortSyms = new Set(['SPY']);
+        Object.values(shortPool).forEach(syms => syms.forEach(s => shortSyms.add(s)));
+
+        // Fehlende Bars nachladen
+        const missingSyms = [...shortSyms].filter(s => !cachedBars[s]);
+        if (missingSyms.length > 0) {
+          for (let i=0; i<missingSyms.length; i+=50) {
+            const b = await getDailyBars(missingSyms.slice(i,i+50), 60);
+            Object.assign(cachedBars, b);
+          }
+        }
+
+        // Short-Kandidaten scoren
+        const shortMap = {};
+        for (const [sector, syms] of Object.entries(shortPool)) {
+          for (const sym of syms) {
+            const result = scoreShort(sym, cachedBars[sym], cachedBars['SPY']||[]);
+            if (!result) continue;
+            result.sectorName = sector;
+            if (!shortMap[sym] || result.score > shortMap[sym].score) {
+              shortMap[sym] = result;
+            }
+          }
+        }
+
+        // Short-Kandidaten zu allCandidates hinzufügen
+        allCandidates = [...allCandidates, ...Object.values(shortMap)];
+      }
+    } catch(e) {
+      console.warn('Short-Scan fehlgeschlagen:', e.message);
+    }
+
+    // ETB-Status für alle Kandidaten abrufen (parallel)
+    setProgress(95, 'ETB-Status prüfen...');
+    try {
+      const syms   = allCandidates.map(c => c.sym);
+      const etbMap = await fetchETBStatus(syms);
+
+      // ETB-Flag + kontextabhängiger Score-Bonus
+      const isBearish  = vixLevel && vixLevel > 25;
+      const isSideways = vixLevel && vixLevel >= 18 && vixLevel <= 25;
+      const etbBonus   = isBearish ? 8 : isSideways ? 4 : 2;
+
+      allCandidates.forEach(c => {
+        const info  = etbMap[c.sym];
+        c.etb       = info?.etb       ?? null;
+        c.shortable = info?.shortable ?? false;
+
+        // Score-Bonus wenn shortable – bärisch/sideways bevorzugt
+        if (c.etb === true) {
+          c.etbBonus  = etbBonus;
+          c.score     = Math.min(100, c.score + etbBonus);
+        } else {
+          c.etbBonus  = 0;
+        }
+      });
+    } catch(e) {
+      console.warn('ETB-Check fehlgeschlagen:', e.message);
+      allCandidates.forEach(c => { c.etb = null; c.etbBonus = 0; });
+    }
     document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('de-DE');
     updateSectionTitle();
     hideProgress();
