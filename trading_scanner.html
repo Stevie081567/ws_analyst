@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#090c10">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' rx='40' fill='%23090c10'/><text x='90' y='125' text-anchor='middle' font-size='100'>📈</text></svg>">
-<title>WS Trading Scanner</title>
+<title>WS Trading Scanner v2.1</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Unbounded:wght@300;400;700;900&display=swap" rel="stylesheet">
 
 <style>
@@ -784,6 +784,7 @@ const SECTOR_UNIVERSE = {
   'Öl&Gas (XOP)':       ['COP','DVN','EOG','MRO','FANG','WTI','APA','CLR','SM','MTDR'],
   'Renewables (ICLN)':  ['NEE','ENPH','SEDG','RUN','BEP','FSLR','ARRY','NOVA','CWEN','AES'],
   'Health (XLV)':       ['LLY','UNH','JNJ','ABBV','MRK','TMO','ABT','DHR','BMY','AMGN'],
+  'Biotech (XBI)':      ['MRNA','BNTX','ALNY','INCY','EXAS','SGEN','PTGX','FATE','RCKT','NTRA'],
   'Industrie (XLI)':    ['HON','UPS','CAT','DE','EMR','ETN','PH','ROK','GWW','CARR'],
   'Konsum Cyc (XLY)':   ['AMZN','TSLA','HD','MCD','NKE','SBUX','TGT','BKNG','LOW','MAR'],
   'Konsum Sta (XLP)':   ['PG','KO','PEP','WMT','COST','PM','MO','CL','KMB','SYY'],
@@ -843,6 +844,15 @@ const DAY_UNIVERSE = {
     'HALO','GKOS','TMDX','NTRA','RXST',
     // MedTech
     'ISRG','IDXX','ALGN','HOLX','IART',
+  ],
+  'Biotech (XBI)': [
+    // High-Beta Biotech – typische Momentum/Catalyst Trades
+    'MRNA','BNTX','NVAX','ALNY','INCY',
+    'EXAS','PTGX','FATE','KYMR','RCKT',
+    'HALO','GKOS','TMDX','NTRA','RXST',
+    'ARQT','KRYS','PRAX','ACAD','INSM',
+    'FOLD','RARE','BEAM','EDIT','NTLA',
+    'CRSP','IONS','SRPT','BMRN','REGN',
   ],
   'Defense (ITA)': [
     'KTOS','CACI','LDOS','BWXT','HEI',
@@ -955,7 +965,7 @@ function scoreShort(sym, bars, spyBars) {
     stopLoss: atr ? price+1.0*atr : null,  // Stop ÜBER Einstieg
     target:   atr ? price-2.0*atr : null,  // Ziel UNTER Einstieg
     vixWarn:  vixLevel&&vixLevel<18,        // bullisch VIX = Short-Risiko
-    liqWarn:  avgDV&&avgDV<50e6,
+    liqWarn:  avgDV&&avgDV<20e6,
     isShort:  true,
   };
 }
@@ -1143,7 +1153,7 @@ function getTop3SectorsFromBridge() {
 const ETF_TO_DAY = {
   'XLK':'Tech (XLK)', 'SOXX':'Semis (SOXX)', 'ROBO':'Robotik (ROBO)',
   'XLF':'Finance (XLF)', 'XLE':'Energie (XLE)', 'XOP':'Öl&Gas (XOP)',
-  'ICLN':'Renewables (ICLN)', 'XLV':'Health (XLV)', 'XLI':'Industrie (XLI)',
+  'ICLN':'Renewables (ICLN)', 'XLV':'Health (XLV)', 'XBI':'Biotech (XBI)', 'XLI':'Industrie (XLI)',
   'XLY':'Konsum Cyc (XLY)', 'ITA':'Defense (ITA)',
   'LIT':'Lithium (LIT)', 'GLD':'Gold & Rohst.(GLD)',
 };
@@ -1264,7 +1274,8 @@ function scoreSwing(sym, bars, spyBars) {
     else if (dvM >= 100)  { liqScore = 20; liqSignal = true; }
     else if (dvM >= 50)   { liqScore = 15; liqSignal = true; }
     else if (dvM >= 20)   { liqScore = 8; }
-    else                  { liqScore = 0; } // unter Minimum → 0
+    else if (dvM >= 10)   { liqScore = 4; }
+    else                  { liqScore = 1; } // kein Ausschluss
   }
 
   // ATR(14) für Swing – klassischer Wilder-Standard
@@ -1292,105 +1303,122 @@ function scoreSwing(sym, bars, spyBars) {
   };
 }
 
-// ── DAY TRADING SCORE (0–100) ──
+// ── TREND-KONSISTENZ ZÄHLER ──
+function calcTrendConsistency(bars, period = 10) {
+  if (bars.length < 3) return { streak: 0, direction: 'flat', upDays: 0, downDays: 0 };
+  const slice = bars.slice(-Math.min(period, bars.length));
+  let streak = 0, direction = 'flat';
+  for (let i = slice.length - 1; i >= 1; i--) {
+    const up = slice[i].c > slice[i-1].c;
+    const dn = slice[i].c < slice[i-1].c;
+    if (i === slice.length - 1) direction = up ? 'up' : dn ? 'down' : 'flat';
+    if (direction === 'up' && up) streak++;
+    else if (direction === 'down' && dn) streak++;
+    else break;
+  }
+  let upDays = 0, downDays = 0;
+  for (let i = 1; i < slice.length; i++) {
+    if (slice[i].c > slice[i-1].c) upDays++;
+    else if (slice[i].c < slice[i-1].c) downDays++;
+  }
+  return { streak, direction, upDays, downDays };
+}
+
+// ── DAY TRADING / SCALPING SCORE (0–100) ──
+// Neue Gewichtung für Bot-Kandidaten:
+//   Liquidität (DV)      30 Pkt  ← Top-Kriterium, $50M Minimum
+//   ATR(5) %             25 Pkt  ← Bewegungsraum = Scalping-Potenzial
+//   Trend-Konsistenz     25 Pkt  ← Tage in Folge = Verlässlichkeit
+//   RVOL heute           20 Pkt  ← Volumen-Bestätigung
 function scoreDay(sym, bars, spyBars) {
   if (!bars || bars.length < 5) return null;
-
-  // Snapshot-Daten bevorzugen wenn verfügbar (RTH)
   const snap    = snapshotCache[sym] ? mergeSnapshotWithBars(sym, bars, snapshotCache) : null;
   const lastBar = bars[bars.length - 1];
   const prevBar = bars[bars.length - 2];
-
   const price     = snap ? snap.price     : lastBar.c;
   const prevClose = snap ? snap.prevClose : prevBar.c;
-
-  // Preis-Filter + Min-Stücke Check
-  const pMin    = parseFloat(document.getElementById('priceMin')?.value) || 5;
-  const pMax    = parseFloat(document.getElementById('priceMax')?.value) || 500;
-  const minShrs = Math.floor(POSITION_SIZE / pMax);
-  const shares  = Math.floor(POSITION_SIZE / price);
+  const pMin = parseFloat(document.getElementById('priceMin')?.value) || 5;
+  const pMax = parseFloat(document.getElementById('priceMax')?.value) || 500;
   if (price < pMin || price > pMax) return null;
-  if (shares < 10) return null; // Mindest-Stückzahl
-  const changePct = snap ? snap.changePct : ((lastBar.c - prevBar.c) / prevBar.c) * 100;
-
-  // Heutiges Volume: Snapshot wenn RTH, sonst gestriger Bar
+  if (Math.floor(POSITION_SIZE / price) < 10) return null;
+  const changePct = snap ? snap.changePct : ((price - prevClose) / prevClose) * 100;
   const todayVol  = snap ? snap.todayVol  : lastBar.v;
-  // Tagesrange für Intraday-Momentum
   const todayHigh = snap ? snap.todayHigh : lastBar.h;
   const todayLow  = snap ? snap.todayLow  : lastBar.l;
 
-  // 1. Dollar Volume (0-30) – Day: min $50M/Tag
+  // 1. LIQUIDITÄT – Dollar Volume (0-30)
   let liqScore = 0, liqSignal = false;
   const avgDV = calcAvgDollarVolume(bars, 20);
-  const MIN_DV_DAY = 50e6;
   if (avgDV) {
     const dvM = avgDV / 1e6;
-    if      (dvM >= 1000) { liqScore = 30; liqSignal = true; }
-    else if (dvM >= 500)  { liqScore = 25; liqSignal = true; }
-    else if (dvM >= 200)  { liqScore = 18; liqSignal = true; }
-    else if (dvM >= 100)  { liqScore = 12; liqSignal = true; }
-    else if (dvM >= 50)   { liqScore = 5; }
-    else                  { liqScore = 0; }
+    if      (dvM >= 500) { liqScore = 30; liqSignal = true; }
+    else if (dvM >= 200) { liqScore = 26; liqSignal = true; }
+    else if (dvM >= 100) { liqScore = 22; liqSignal = true; }
+    else if (dvM >= 75)  { liqScore = 17; liqSignal = true; }
+    else if (dvM >= 50)  { liqScore = 13; }
+    else if (dvM >= 30)  { liqScore = 9; }
+    else if (dvM >= 20)  { liqScore = 6; }
+    else if (dvM >= 10)  { liqScore = 3; }
+    else                 { liqScore = 1; } // kein Ausschluss – Score spiegelt Risiko
   }
 
-  // 2. Relative Volume heute (0-25)
-  let rvolScore = 0, rvolSignal = false;
-  const avgVol   = calcAvgVolume(bars, 20);
-  const volRatio = avgVol && avgVol > 0 ? todayVol / avgVol : null;
-  if (volRatio) {
-    if      (volRatio >= 3.0) { rvolScore = 25; rvolSignal = true; }
-    else if (volRatio >= 2.0) { rvolScore = 20; rvolSignal = true; }
-    else if (volRatio >= 1.5) { rvolScore = 13; rvolSignal = true; }
-    else if (volRatio >= 1.2) { rvolScore = 6; }
-  }
-
-  // 3. ATR(5) für Day Trading – aktuelle Intraday-Volatilität
-  // Stop = 0.5× ATR(5), Target = 1.5× ATR(5) → R/R 1:3 intraday
+  // 2. ATR(5) % – Bewegungsraum (0-25)
   let atrScore = 0, atrSignal = false;
   const atr    = calcATR(bars, 5);
   const atrPct = atr ? (atr / price) * 100 : null;
   if (atrPct) {
-    if      (atrPct >= 4.0) { atrScore = 25; atrSignal = true; }
-    else if (atrPct >= 2.5) { atrScore = 20; atrSignal = true; }
-    else if (atrPct >= 1.5) { atrScore = 13; atrSignal = true; }
-    else if (atrPct >= 0.8) { atrScore = 6; }
+    if      (atrPct >= 5.0) { atrScore = 25; atrSignal = true; }
+    else if (atrPct >= 3.5) { atrScore = 21; atrSignal = true; }
+    else if (atrPct >= 2.5) { atrScore = 17; atrSignal = true; }
+    else if (atrPct >= 1.5) { atrScore = 11; atrSignal = true; }
+    else if (atrPct >= 0.8) { atrScore = 5; }
   }
 
-  // 4. Intraday-Momentum (0-20) – Close-Position im Tagesrange
-  // Mit Snapshot: echte heutige Position; ohne: gestern's Bar
-  let intScore = 0, intSignal = false;
-  const range = todayHigh - todayLow;
-  const intMom = range > 0 ? (price - todayLow) / range : null;
-  if (intMom !== null) {
-    if      (intMom >= 0.8) { intScore = 20; intSignal = true; }
-    else if (intMom >= 0.6) { intScore = 15; intSignal = true; }
-    else if (intMom >= 0.4) { intScore = 8; }
-    else if (intMom >= 0.2) { intScore = 3; }
+  // 3. TREND-KONSISTENZ – Tage in Folge (0-25)
+  let trendScore = 0, trendSignal = false, trendWarn = false, reversalFlag = false;
+  const tc = calcTrendConsistency(bars, 10);
+  if (tc.streak >= 1) {
+    if      (tc.streak >= 5) { trendScore = 25; trendSignal = true; trendWarn = true; }
+    else if (tc.streak === 4){ trendScore = 22; trendSignal = true; }
+    else if (tc.streak === 3){ trendScore = 17; trendSignal = true; }
+    else if (tc.streak === 2){ trendScore = 10; }
+    else                     { trendScore = 5; }
+    if (tc.streak >= 5 && tc.direction === 'up') reversalFlag = true;
+  }
+
+  // 4. RVOL – Relative Volume (0-20)
+  let rvolScore = 0, rvolSignal = false;
+  const avgVol   = calcAvgVolume(bars, 20);
+  const volRatio = avgVol && avgVol > 0 ? todayVol / avgVol : null;
+  if (volRatio) {
+    if      (volRatio >= 3.0) { rvolScore = 20; rvolSignal = true; }
+    else if (volRatio >= 2.0) { rvolScore = 16; rvolSignal = true; }
+    else if (volRatio >= 1.5) { rvolScore = 11; rvolSignal = true; }
+    else if (volRatio >= 1.2) { rvolScore = 6; }
   }
 
   const avgDolV = avgDV || 0;
   const posPct  = avgDolV > 0 ? (POSITION_SIZE / avgDolV) * 100 : null;
-  const ma10 = calcMA(bars, 10);
-  const ma20 = calcMA(bars, 20);
+  const ma10 = calcMA(bars, 10), ma20 = calcMA(bars, 20);
   const ma50 = calcMA(bars, Math.min(50, bars.length));
 
   return {
     sym, price, prevClose, changePct, mode: 'day',
-    score: liqScore + rvolScore + atrScore + intScore,
-    liqScore, rvolScore, atrScore, intScore,
-    liqSignal, rvolSignal, atrSignal, intSignal,
+    score: liqScore + atrScore + trendScore + rvolScore,
+    liqScore, atrScore, trendScore, rvolScore,
+    liqSignal, atrSignal, trendSignal, rvolSignal,
+    trendStreak: tc.streak, trendDirection: tc.direction,
+    trendUpDays: tc.upDays, trendDownDays: tc.downDays,
+    trendWarn, reversalFlag,
     ma10, ma20, ma50, atr, atrPct, avgVol, todayVol, volRatio,
     avgDollarVol: avgDolV, posPct,
-    // Day R/R: 0.5× ATR(5) Stop, 1.5× ATR(5) Target → R/R 1:3
     stopLoss: atr ? price - 0.5 * atr : null,
     target:   atr ? price + 1.5 * atr : null,
     vixWarn:  vixLevel && vixLevel > 25,
-    liqWarn:  avgDV && avgDV < MIN_DV_DAY,
+    liqWarn:  avgDV && avgDV < 20e6,
     isIntraday: !!snap,
-    momSignal: intSignal,
-    volSignal: rvolSignal,
-    trendSignal: atrSignal,
-    rsSignal: liqSignal,
+    momSignal: rvolSignal, volSignal: rvolSignal,
+    trendSignal, rsSignal: liqSignal,
   };
 }
 
@@ -1501,7 +1529,9 @@ function renderCard(c, sectorName, rank) {
     if (c.liqSignal)  signals += `<span class="sig-badge sig-rs">💧 LIQ ${fmtDV(c.avgDollarVol)}</span>`;
     if (c.rvolSignal) signals += `<span class="sig-badge sig-vol">⚡ RVOL ×${c.volRatio?.toFixed(1)||'?'}</span>`;
     if (c.atrSignal)  signals += `<span class="sig-badge sig-trend">◈ ATR ${c.atrPct?.toFixed(1)||'?'}%</span>`;
-    if (c.intSignal)  signals += `<span class="sig-badge sig-mom">▲ INTRADAY</span>`;
+    if (c.trendSignal && !c.trendWarn) signals += `<span class="sig-badge sig-mom">${c.trendDirection==='up'?'▲':'▼'} ${c.trendStreak}d STREAK</span>`;
+    if (c.trendWarn)  signals += `<span class="sig-badge sig-warn">⚠ ${c.trendStreak}d – TRENDWENDE?</span>`;
+    if (c.reversalFlag) signals += `<span class="sig-badge" style="background:rgba(255,51,88,0.15);color:#ff3358;border:1px solid rgba(255,51,88,0.4)">↓ SHORT-KANDIDAT</span>`;
   } else {
     if (c.momSignal)   signals += `<span class="sig-badge sig-mom">▲ SWING MOM</span>`;
     if (c.rsSignal)    signals += `<span class="sig-badge sig-rs">★ RS 5d</span>`;
@@ -1518,16 +1548,19 @@ function renderCard(c, sectorName, rank) {
       <span class="mc-val" style="color:${liqColor}">${fmtDV(c.avgDollarVol)}</span>
     </div>
     <div class="metric-cell">
-      <span class="mc-label">RVOL</span>
-      <span class="mc-val" style="color:${c.rvolSignal?'var(--cyan)':'var(--text)'}">${c.volRatio?c.volRatio.toFixed(1)+'×':'--'}</span>
-    </div>
-    <div class="metric-cell">
-      <span class="mc-label">ATR %</span>
+      <span class="mc-label">ATR(5)%</span>
       <span class="mc-val" style="color:${c.atrSignal?'var(--accent-purple)':'var(--text)'}">${c.atrPct?c.atrPct.toFixed(1)+'%':'--'}</span>
     </div>
     <div class="metric-cell">
-      <span class="mc-label">Pos. %Vol</span>
-      <span class="mc-val" style="color:${posPctColor}">${c.posPct?c.posPct.toFixed(3)+'%':'--'}</span>
+      <span class="mc-label">Streak</span>
+      <span class="mc-val" style="color:${c.trendWarn?'var(--amber)':c.trendSignal?'var(--green)':'var(--text)'}">
+        ${c.trendStreak>0?(c.trendDirection==='up'?'▲':'▼')+c.trendStreak+'d':'--'}
+        ${c.trendWarn?'⚠':''}
+      </span>
+    </div>
+    <div class="metric-cell">
+      <span class="mc-label">RVOL</span>
+      <span class="mc-val" style="color:${c.rvolSignal?'var(--cyan)':'var(--text)'}">${c.volRatio?c.volRatio.toFixed(1)+'×':'--'}</span>
     </div>` : `
     <div class="metric-cell">
       <span class="mc-label">3d %</span>
@@ -1722,7 +1755,7 @@ let activeSectors   = null;   // Set von Sektor-Syms die gescannt werden sollen 
 const ETF_TO_UNIVERSE = {
   'XLK': 'Tech (XLK)', 'SOXX': 'Semis (SOXX)', 'ROBO': 'Robotik (ROBO)',
   'XLF': 'Finance (XLF)', 'XLE': 'Energie (XLE)', 'XOP': 'Öl&Gas (XOP)',
-  'ICLN': 'Renewables (ICLN)', 'XLV': 'Health (XLV)', 'XLI': 'Industrie (XLI)',
+  'ICLN': 'Renewables (ICLN)', 'XLV': 'Health (XLV)', 'XBI': 'Biotech (XBI)', 'XLI': 'Industrie (XLI)',
   'XLC': 'Konsum Cyc (XLY)', 'XLY': 'Konsum Cyc (XLY)', 'XLP': 'Konsum Sta (XLP)',
   'JETS': 'Travel (JETS)', 'ITA': 'Defense (ITA)',
   'GLD': 'Gold & Rohst.(GLD)', 'LIT': 'Lithium (LIT)',
@@ -1762,52 +1795,42 @@ function initBridgeUI() {
       const rank    = i + 1;
       const isPos   = s.pct >= 0;
       const sign    = isPos ? '+' : '';
+      const isLong  = rank <= 3 && isPos;
+      const isShort = rank > sectors.length - 3; // Bottom 3
 
-      // Farbkodierung nach Rang
-      let color, bgColor, borderColor, rankBadge = '', fontWeight = '500';
-      if (rank <= 3 && isPos) {
-        // TOP 3 → GRÜN → werden gescannt
-        color       = '#00ff88';
-        bgColor     = 'rgba(0,255,136,0.12)';
-        borderColor = 'rgba(0,255,136,0.5)';
-        fontWeight  = '700';
-        rankBadge   = `<span style="font-size:7px;background:#00ff88;color:#090c10;border-radius:2px;padding:1px 4px;font-weight:700;letter-spacing:0.05em">SCAN</span>`;
+      let color, bgColor, borderColor, badge = '', fontWeight = '500';
+
+      if (isLong) {
+        color = '#00ff88'; bgColor = 'rgba(0,255,136,0.12)';
+        borderColor = 'rgba(0,255,136,0.5)'; fontWeight = '700';
+        badge = `<span style="font-size:7px;background:#00ff88;color:#090c10;border-radius:2px;padding:1px 4px;font-weight:700">▲ LONG</span>`;
+      } else if (isShort) {
+        color = '#ff3358'; bgColor = 'rgba(255,51,88,0.08)';
+        borderColor = 'rgba(255,51,88,0.35)'; fontWeight = '700';
+        badge = `<span style="font-size:7px;background:#ff3358;color:#fff;border-radius:2px;padding:1px 4px;font-weight:700">▼ SHORT</span>`;
       } else if (rank <= 6 && isPos) {
-        // Rang 4-6 positiv → GELB
-        color       = '#ffdd00';
-        bgColor     = 'rgba(255,220,0,0.08)';
+        color = '#ffdd00'; bgColor = 'rgba(255,220,0,0.08)';
         borderColor = 'rgba(255,220,0,0.3)';
       } else if (rank <= 9 && isPos) {
-        // Rang 7-9 positiv → ORANGE
-        color       = '#ff9640';
-        bgColor     = 'rgba(255,150,64,0.08)';
+        color = '#ff9640'; bgColor = 'rgba(255,150,64,0.08)';
         borderColor = 'rgba(255,150,64,0.25)';
-      } else if (!isPos) {
-        // Negativ → ROT-GRAU
-        color       = '#6b778c';
-        bgColor     = 'transparent';
-        borderColor = 'var(--border)';
       } else {
-        // Neutral/Rest → GRAU
-        color       = '#7d8590';
-        bgColor     = 'transparent';
+        color = '#6b778c'; bgColor = 'transparent';
         borderColor = 'var(--border)';
       }
 
-      const active = rank <= 3 && isPos;
+      const active = isLong; // nur Long-Sektoren vorselektiert
 
       return `<div class="chip sector-chip ${active ? 'active' : ''}"
                    data-sym="${s.sym}" data-pct="${s.pct}"
                    style="display:flex;align-items:center;gap:5px;
-                          border-color:${borderColor};
-                          background:${bgColor};
-                          color:${color};
-                          font-weight:${fontWeight};
-                          opacity:${isPos ? '1' : '0.6'}">
+                          border-color:${borderColor};background:${bgColor};
+                          color:${color};font-weight:${fontWeight};
+                          opacity:${Math.abs(s.pct) < 0.1 ? '0.5' : '1'}">
         <span style="font-size:9px;color:var(--dim);font-weight:400">#${rank}</span>
         <span>${s.name}</span>
         <span style="font-size:8px;font-weight:600">${sign}${s.pct.toFixed(2)}%</span>
-        ${rankBadge}
+        ${badge}
       </div>`;
     }).join('');
 
@@ -1939,7 +1962,14 @@ function updateActiveSectors() {
     activeSectors = active.size === Object.keys(SECTOR_UNIVERSE).length ? null : active;
   }
   // Bei Änderung sofort neu scoren wenn Daten vorhanden
-  if (Object.keys(cachedBars).length > 0) rescoreAndRender();
+  // Bei Sektor-Änderung: voller Rescan wenn Keys da, sonst nur rescore
+  if (Object.keys(cachedBars).length > 0) {
+    if (ALPACA_KEY && ALPACA_SECRET) {
+      runScan(); // Neue Sektoren → neue Symbole möglich
+    } else {
+      rescoreAndRender();
+    }
+  }
 }
 let cachedBars = {};
 let cachedSectorSymbols = {};
@@ -2014,45 +2044,81 @@ async function runScan() {
     document.getElementById('connDot').style.background = 'var(--green)';
     document.getElementById('connStatus').textContent = `Verbunden · Alpaca ${env.toUpperCase()}`;
 
-    // Lot-Size aus UI übernehmen
+    // ═══════════════════════════════════════════════
+    // UNIVERSUM AUFBAUEN
+    // Long:  Top 3 positive Sektoren aus Bridge
+    // Short: Bottom 3 schwächste Sektoren aus Bridge
+    // Fallback: alle Sektoren wenn keine Bridge-Daten
+    // ═══════════════════════════════════════════════
     POSITION_SIZE = getLotSize();
     updateMinSharesDisplay();
 
-    // Universum wählen: Day → DAY_UNIVERSE (Top-3 Sektoren aus Bridge)
-    //                   Swing → SECTOR_UNIVERSE (alle Sektoren)
-    let baseUniverse = SECTOR_UNIVERSE;
-    let universeNote = '';
+    const baseUni = mode === 'day' ? DAY_UNIVERSE : SECTOR_UNIVERSE;
 
-    if (mode === 'day') {
-      baseUniverse = DAY_UNIVERSE;
-      const top3 = getTop3SectorsFromBridge();
-      if (top3 && top3.length > 0) {
-        // Nur Top-3-Sektoren aus Bridge scannen
-        const filteredUni = {};
-        top3.forEach(sym => {
-          const key = ETF_TO_DAY[sym];
-          if (key && DAY_UNIVERSE[key]) filteredUni[key] = DAY_UNIVERSE[key];
-        });
-        // Fallback: wenn Bridge-Sektoren nicht im DAY_UNIVERSE → alle nehmen
-        baseUniverse = Object.keys(filteredUni).length >= 1 ? filteredUni : DAY_UNIVERSE;
-        universeNote = Object.keys(filteredUni).length >= 1
-          ? `Bridge Top-${Object.keys(filteredUni).length}: ${Object.keys(filteredUni).join(', ')}`
-          : 'Alle Sektoren (kein Bridge-Signal)';
-      } else {
-        universeNote = 'Alle Sektoren (kein Bridge)';
+    // Bridge-Daten lesen
+    let longSectors  = null; // Top 3 positiv
+    let shortSectors = null; // Bottom 3 schwächste
+    let bridgeNote   = '';
+
+    try {
+      const raw = localStorage.getItem('ws_sector_rankings');
+      if (raw) {
+        const bd = JSON.parse(raw);
+        if (Date.now() - bd.timestamp < 4 * 60 * 60 * 1000) {
+          const sorted = [...bd.data].sort((a,b) => b.pct - a.pct);
+
+          // Long: Top 3 mit positivem Wert
+          const top3  = sorted.filter(s => s.pct > 0).slice(0, 3);
+          // Short: Bottom 3 (schlechteste, egal ob positiv oder negativ)
+          const bot3  = sorted.slice(-3).reverse();
+
+          if (top3.length > 0) {
+            longSectors = {};
+            top3.forEach(s => {
+              const key = mode === 'day' ? ETF_TO_DAY[s.sym] : Object.keys(SECTOR_UNIVERSE).find(k => k.includes(s.sym));
+              if (key && baseUni[key]) longSectors[key] = baseUni[key];
+            });
+            if (Object.keys(longSectors).length === 0) longSectors = null;
+          }
+
+          if (bot3.length > 0) {
+            shortSectors = {};
+            bot3.forEach(s => {
+              const key = mode === 'day' ? ETF_TO_DAY[s.sym] : Object.keys(SECTOR_UNIVERSE).find(k => k.includes(s.sym));
+              if (key && baseUni[key]) shortSectors[key] = baseUni[key];
+            });
+            if (Object.keys(shortSectors).length === 0) shortSectors = null;
+          }
+
+          const longNames  = longSectors  ? Object.keys(longSectors).map(k=>k.split('(')[0].trim()).join(', ')  : 'alle';
+          const shortNames = shortSectors ? Object.keys(shortSectors).map(k=>k.split('(')[0].trim()).join(', ') : 'alle';
+          bridgeNote = `▲ Long: ${longNames}  ·  ▼ Short: ${shortNames}`;
+        }
       }
-    }
+    } catch(e) { console.warn('Bridge-Fehler:', e.message); }
 
-    // Symbole aufbauen – gefiltert nach aktivem Sektor-Set
-    setProgress(15, `Symbole aufbauen (${universeNote || 'Swing'})...`);
+    // Fallback wenn keine Bridge
+    const longUni  = longSectors  || baseUni;
+    const shortUni = shortSectors || baseUni;
+
+    // ── LONG-Symbole aufbauen ──
+    setProgress(15, `Symbole aufbauen... ${bridgeNote || ''}`);
     const allSymbols = new Set(['SPY']);
     cachedSectorSymbols = {};
-    for (const [sector, holdings] of Object.entries(baseUniverse)) {
+
+    for (const [sector, holdings] of Object.entries(longUni)) {
       if (activeSectors && !activeSectors.has(sector)) continue;
       const syms = mode === 'day' ? holdings : holdings.slice(0, topN);
       cachedSectorSymbols[sector] = syms;
       syms.forEach(s => allSymbols.add(s));
     }
+
+    // Short-Symbole vorab in allSymbols einschließen (ein gemeinsamer Bar-Download)
+    for (const holdings of Object.values(shortUni)) {
+      const syms = mode === 'day' ? holdings : holdings.slice(0, topN);
+      syms.forEach(s => allSymbols.add(s));
+    }
+
     cachedTopN = topN;
 
     const symArr      = [...allSymbols];
@@ -2122,82 +2188,70 @@ async function runScan() {
     allCandidates = Object.values(candidateMap);
 
     // ── SHORT-KANDIDATEN aus Bottom-Sektoren ──
-    // Bottom-Sektoren = negative oder schwächste Sektoren aus Bridge
     try {
-      const raw = localStorage.getItem('ws_sector_rankings');
-      if (raw) {
-        const bridgeParsed = JSON.parse(raw);
-        const bottomSectors = [...bridgeParsed.data]
-          .sort((a,b) => a.pct - b.pct)  // aufsteigend = schwächste zuerst
-          .slice(0, 3)                    // Bottom 3
-          .map(s => ETF_TO_DAY[s.sym])
-          .filter(Boolean);
-
-        // Short-Universum: Bottom-Sektoren aus DAY_UNIVERSE
-        const shortUniverse = {};
-        bottomSectors.forEach(key => {
-          if (DAY_UNIVERSE[key]) shortUniverse[key] = DAY_UNIVERSE[key];
-        });
-
-        // Wenn keine Bridge → alle Sektoren als Short-Pool
-        const shortPool = Object.keys(shortUniverse).length > 0
-          ? shortUniverse : DAY_UNIVERSE;
-
-        // Short-Symbole sammeln
-        const shortSyms = new Set(['SPY']);
-        Object.values(shortPool).forEach(syms => syms.forEach(s => shortSyms.add(s)));
-
-        // Fehlende Bars nachladen
-        const missingSyms = [...shortSyms].filter(s => !cachedBars[s]);
-        if (missingSyms.length > 0) {
-          for (let i=0; i<missingSyms.length; i+=50) {
-            const b = await getDailyBars(missingSyms.slice(i,i+50), 60);
-            Object.assign(cachedBars, b);
+      const shortMap = {};
+      for (const [sector, holdings] of Object.entries(shortUni)) {
+        const syms = mode === 'day' ? holdings : holdings.slice(0, topN);
+        for (const sym of syms) {
+          const result = scoreShort(sym, cachedBars[sym], cachedBars['SPY']||[]);
+          if (!result) continue;
+          result.sectorName = `▼ ${sector}`;
+          if (!shortMap[sym] || result.score > shortMap[sym].score) {
+            shortMap[sym] = result;
           }
         }
-
-        // Short-Kandidaten scoren
-        const shortMap = {};
-        for (const [sector, syms] of Object.entries(shortPool)) {
-          for (const sym of syms) {
-            const result = scoreShort(sym, cachedBars[sym], cachedBars['SPY']||[]);
-            if (!result) continue;
-            result.sectorName = sector;
-            if (!shortMap[sym] || result.score > shortMap[sym].score) {
-              shortMap[sym] = result;
-            }
-          }
-        }
-
-        // Short-Kandidaten zu allCandidates hinzufügen
-        allCandidates = [...allCandidates, ...Object.values(shortMap)];
       }
+      // Short-Kandidaten hinzufügen (isShort=true bereits in scoreShort gesetzt)
+      allCandidates = [...allCandidates, ...Object.values(shortMap)];
     } catch(e) {
       console.warn('Short-Scan fehlgeschlagen:', e.message);
     }
 
-    // ETB-Status für alle Kandidaten abrufen (parallel)
-    setProgress(95, 'ETB-Status prüfen...');
+    // ── ETB: Nur für Top-Kandidaten nach Score ──
+    // Long:  Top 15 nach Score
+    // Short: Top 15 nach Score
+    // Maximal 30 ETB-Calls statt 90+
+    setProgress(95, `ETB für Top-${topN} Long + Top-${topN} Short...`);
     try {
-      const syms   = allCandidates.map(c => c.sym);
-      const etbMap = await fetchETBStatus(syms);
+      const ratingOrder = { 'strong-buy':0, 'buy':1, 'watch':2 };
+      const ETB_TOP_N = topN; // folgt der Top 3/5/10 Einstellung
 
-      // ETB-Flag + kontextabhängiger Score-Bonus
+      // Jeweils Top-N aus Long und Short nach Score sortiert
+      const longTop  = allCandidates
+        .filter(c => !c.isShort && getRating(c.score))
+        .sort((a,b) => (ratingOrder[getRating(a.score)]??9) - (ratingOrder[getRating(b.score)]??9) || b.score - a.score)
+        .slice(0, ETB_TOP_N);
+
+      const shortTop = allCandidates
+        .filter(c => c.isShort && getRating(c.score))
+        .sort((a,b) => (ratingOrder[getRating(a.score)]??9) - (ratingOrder[getRating(b.score)]??9) || b.score - a.score)
+        .slice(0, ETB_TOP_N);
+
+      const etbSyms = [...new Set([...longTop, ...shortTop].map(c => c.sym))];
+      setProgress(96, `ETB für ${etbSyms.length} Top-Kandidaten...`);
+
+      const etbMap = await fetchETBStatus(etbSyms);
+
       const isBearish  = vixLevel && vixLevel > 25;
       const isSideways = vixLevel && vixLevel >= 18 && vixLevel <= 25;
       const etbBonus   = isBearish ? 8 : isSideways ? 4 : 2;
 
+      // ETB nur auf die abgefragten Kandidaten setzen
       allCandidates.forEach(c => {
-        const info  = etbMap[c.sym];
-        c.etb       = info?.etb       ?? null;
-        c.shortable = info?.shortable ?? false;
-
-        // Score-Bonus wenn shortable – bärisch/sideways bevorzugt
-        if (c.etb === true) {
-          c.etbBonus  = etbBonus;
-          c.score     = Math.min(100, c.score + etbBonus);
+        if (etbMap[c.sym] !== undefined) {
+          const info  = etbMap[c.sym];
+          c.etb       = info?.etb       ?? null;
+          c.shortable = info?.shortable ?? false;
+          if (c.etb === true) {
+            c.etbBonus = etbBonus;
+            c.score    = Math.min(100, c.score + etbBonus);
+          } else {
+            c.etbBonus = 0;
+          }
         } else {
-          c.etbBonus  = 0;
+          // Nicht abgefragt → neutral
+          c.etb      = null;
+          c.etbBonus = 0;
         }
       });
     } catch(e) {
@@ -2346,40 +2400,54 @@ window.addEventListener('load', () => {
     if (hint) hint.style.display = 'inline';
   }
 
-  // Button Events
-  const btnPdf = document.getElementById('btnPdf');
-  if (btnPdf) {
-    btnPdf.addEventListener('click', () => {
-      // PDF-Meta-Zeile befüllen
-      const now = new Date();
-      const env = document.getElementById('apiEnv').value.toUpperCase();
-      const filter = currentFilter === 'all' ? 'Alle Kandidaten' : currentFilter;
-      const vixStr = vixLevel ? `VIX ${vixLevel.toFixed(1)}` : '';
-      document.getElementById('pdfMeta').textContent =
-        `Stand: ${now.toLocaleDateString('de-DE')} ${now.toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit'})}  ·  Alpaca ${env}  ·  ${document.getElementById('sectionTitle').textContent}  ·  Filter: ${filter}  ${vixStr ? '·  ' + vixStr : ''}`;
-      window.print();
-    });
-  }
+  // ── SCAN Button ──
+  const btnScan = document.getElementById('btnScan');
+  if (btnScan) btnScan.addEventListener('click', () => runScan());
 
   const btnClear = document.getElementById('btnClear');
   if (btnClear) btnClear.addEventListener('click', () => clearKeys());
 
-  // Modus-Wechsel → sofort neu scoren (kein API-Call nötig)
-  const modeSelect = document.getElementById('tradeMode');
-  if (modeSelect) modeSelect.addEventListener('change', () => rescoreAndRender());
+  // ── PDF Button ──
+  const btnPdf = document.getElementById('btnPdf');
+  if (btnPdf) {
+    btnPdf.addEventListener('click', () => {
+      const now    = new Date();
+      const env    = document.getElementById('apiEnv').value.toUpperCase();
+      const filter = currentFilter === 'all' ? 'Alle Kandidaten' : currentFilter;
+      const vixStr = vixLevel ? `VIX ${vixLevel.toFixed(1)}` : '';
+      document.getElementById('pdfMeta').textContent =
+        `Stand: ${now.toLocaleDateString('de-DE')} ${now.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}  ·  Alpaca ${env}  ·  ${document.getElementById('sectionTitle').textContent}  ·  Filter: ${filter}  ${vixStr?'·  '+vixStr:''}`;
+      window.print();
+    });
+  }
 
-  // Top N Wechsel → neuer vollständiger Scan (andere Symbole)
-  const topNSelect = document.getElementById('topN');
-  if (topNSelect) topNSelect.addEventListener('change', () => {
-    const newN = parseInt(topNSelect.value);
-    if (newN !== cachedTopN && ALPACA_KEY && ALPACA_SECRET) {
-      runScan(); // Neue Symbole → API-Call nötig
+  // ── Long/Short Tabs – addEventListener statt onclick ──
+  const tabLong  = document.getElementById('tabLong');
+  const tabShort = document.getElementById('tabShort');
+  if (tabLong)  { tabLong.removeAttribute('onclick');  tabLong.addEventListener('click',  () => setDirection('long')); }
+  if (tabShort) { tabShort.removeAttribute('onclick'); tabShort.addEventListener('click', () => setDirection('short')); }
+
+  // ── Modus-Wechsel Day/Swing → voller Rescan (andere Scoring-Logik + anderes Universum) ──
+  const modeSelect = document.getElementById('tradeMode');
+  if (modeSelect) modeSelect.addEventListener('change', () => {
+    if (ALPACA_KEY && ALPACA_SECRET) {
+      runScan(); // Day↔Swing braucht neues Universum + neues Scoring
     } else {
       rescoreAndRender();
     }
   });
 
-  // Filter Chips
+  // ── Top N Wechsel → voller Rescan ──
+  const topNSelect = document.getElementById('topN');
+  if (topNSelect) topNSelect.addEventListener('change', () => {
+    if (ALPACA_KEY && ALPACA_SECRET) {
+      runScan();
+    } else {
+      rescoreAndRender();
+    }
+  });
+
+  // ── Filter Chips ──
   document.querySelectorAll('.chip').forEach(chip => {
     chip.addEventListener('click', () => setFilter(chip.dataset.filter));
   });

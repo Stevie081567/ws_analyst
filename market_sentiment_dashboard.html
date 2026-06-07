@@ -204,16 +204,20 @@
     padding: 9px 20px;
     font-family: 'DM Mono', monospace;
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     cursor: pointer;
-    transition: opacity 0.2s, transform 0.1s;
+    transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
     white-space: nowrap;
   }
+  .btn-connect:hover  { opacity: 0.9; transform: translateY(-1px); }
+  .btn-connect:active { transform: scale(0.97); }
 
-  .btn-connect:hover { opacity: 0.85; transform: translateY(-1px); }
-  .btn-connect:active { transform: translateY(0); }
+  @keyframes btnPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255,184,0,0.5); }
+    50%       { opacity: 0.85; box-shadow: 0 0 0 6px rgba(255,184,0,0); }
+  }
 
   /* MAIN GRID */
   .main-grid {
@@ -1127,6 +1131,7 @@ const SECTOR_ETFS = [
   {sym:'ICLN', name:'Renewabl.',   sub: true,   parent: 'XLE', group: 'equity'},
   // ── Gesundheit / Industrie / Kommunikation ──
   {sym:'XLV',  name:'Health',      sub: false,  parent: null,  group: 'equity'},
+  {sym:'XBI',  name:'Biotech',     sub: true,   parent: 'XLV', group: 'equity'},
   {sym:'XLI',  name:'Industrie',   sub: false,  parent: null,  group: 'equity'},
   {sym:'XLC',  name:'Komm.',       sub: false,  parent: null,  group: 'equity'},
   // ── Konsum ──
@@ -1415,6 +1420,8 @@ async function updateSectors() {
       // Safe Haven: Anleihen
       TLT:  '#60a5fa',
       BIL:  '#93c5fd',
+      // Biotech
+      XBI:  '#a78bfa',
       // Safe Haven: Edelmetalle
       GLD:  '#ffd700',
       SLV:  '#c0c0c0',
@@ -2448,6 +2455,15 @@ function applyConfigToUI(cfg) {
 // INIT
 // ============================
 async function initDashboard() {
+  // ── Button-Feedback ──
+  const btn = document.querySelector('.btn-connect');
+  if (btn) {
+    btn.disabled    = true;
+    btn.textContent = '⟳ VERBINDE...';
+    btn.style.background = 'var(--accent-amber)';
+    btn.style.animation  = 'btnPulse 0.8s ease-in-out infinite';
+  }
+
   ALPACA_KEY    = document.getElementById('apiKey').value.trim();
   ALPACA_SECRET = document.getElementById('apiSecret').value.trim();
   const env      = document.getElementById('apiEnv').value;
@@ -2457,7 +2473,7 @@ async function initDashboard() {
   DATA_BASE   = 'https://data.alpaca.markets';
 
   if (!ALPACA_KEY || !ALPACA_SECRET) {
-    showAlert('info', '<strong>INFO:</strong> Kein Alpaca API-Key angegeben. Nur Fear &amp; Greed Index wird geladen (öffentliche API).');
+    showAlert('info', '<strong>INFO:</strong> Kein Alpaca API-Key angegeben. Nur öffentliche Daten werden geladen.');
     connected = false;
     document.getElementById('connDot').style.background  = 'var(--accent-amber)';
     document.getElementById('connStatus').textContent    = 'Teilweise verbunden (F&G only)';
@@ -2471,46 +2487,67 @@ async function initDashboard() {
       });
       if (!testRes.ok) throw new Error(`Auth fehlgeschlagen (${testRes.status})`);
 
-      // Verbindung OK → Config persistent speichern
       saveConfig(ALPACA_KEY, ALPACA_SECRET, env, String(refreshSeconds));
       document.getElementById('keySavedTag').style.display = 'inline';
-
       connected = true;
       document.getElementById('connDot').style.background = 'var(--accent-green)';
       document.getElementById('connStatus').textContent   = `Verbunden · Alpaca ${env === 'live' ? 'LIVE' : 'PAPER'} · Keys gespeichert`;
-      showAlert('info', `<strong>✅ VERBUNDEN:</strong> Alpaca ${env.toUpperCase()} Account aktiv. Keys lokal gespeichert – beim nächsten Öffnen automatisch geladen.`);
+      showAlert('info', `<strong>✅ VERBUNDEN:</strong> Alpaca ${env.toUpperCase()} aktiv.`);
     } catch(e) {
       connected = false;
       document.getElementById('connDot').style.background = 'var(--accent-red)';
       document.getElementById('connStatus').textContent   = 'Verbindungsfehler';
-      showAlert('error', `<strong>❌ FEHLER:</strong> ${e.message} · Prüfe API-Keys und Berechtigungen.`);
+      showAlert('error', `<strong>❌ FEHLER:</strong> ${e.message}`);
     }
   }
 
+  // Daten laden
   await refreshAll();
+
+  // Timer neu starten (setzt Countdown zurück)
   startCountdown();
+
+  // Button zurücksetzen
+  if (btn) {
+    btn.disabled    = false;
+    btn.style.animation = '';
+    btn.style.background = '';
+    btn.textContent = '✓ AKTUALISIERT';
+    btn.style.background = 'var(--accent-green)';
+    setTimeout(() => {
+      btn.textContent = '▶ CONNECT & SCAN';
+      btn.style.background = '';
+    }, 3000);
+  }
 }
 
 // ============================
-// AUTO-START: Config laden + F&G + ggf. Auto-Connect
+// AUTO-START
 // ============================
 window.addEventListener('load', async () => {
   const cfg = loadConfig();
   applyConfigToUI(cfg);
 
-  // F&G + öffentliche Daten sofort laden
+  // Connect-Button: addEventListener statt onclick
+  const btn = document.querySelector('.btn-connect');
+  if (btn) {
+    btn.removeAttribute('onclick');
+    btn.addEventListener('click', () => initDashboard());
+  }
+
+  // F&G sofort laden
   setFetchStatus('F&G', 'loading');
   try {
     await updateFearGreed();
     setFetchStatus('F&G', 'ok');
   } catch(e) { setFetchStatus('F&G', 'error', e.message); }
 
-  // Countdown starten (einmalig)
+  // Countdown einmalig starten
   startCountdown();
 
-  // Wenn Keys vorhanden → automatisch verbinden (startet Countdown neu = Timer-Reset)
+  // Auto-Connect wenn Keys vorhanden
   if (cfg && cfg.key && cfg.secret) {
-    showAlert('info', '<strong>🔄 AUTO-CONNECT:</strong> Gespeicherte API-Keys gefunden – verbinde automatisch...');
+    showAlert('info', '<strong>🔄 AUTO-CONNECT:</strong> Gespeicherte Keys gefunden...');
     await initDashboard();
   }
 });
