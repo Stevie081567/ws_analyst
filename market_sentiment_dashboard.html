@@ -1174,24 +1174,76 @@ const SECTOR_ETFS = [
 ];
 
 // ============================
-// FEAR & GREED (Alt.me API – mit CORS-Proxy-Fallback)
+// FEAR & GREED – Multi-Source
+// Quelle 1: CNN Stock Market F&G (primär, via allorigins)
+// Quelle 2: Alternative.me (Crypto F&G – Fallback, ACHTUNG: anderer Index!)
 // ============================
 async function fetchFearGreed() {
+
+  // Quelle 1: CNN Business via allorigins
+  // CNN liefert den echten Stock Market F&G (7 Indikatoren)
+  // Alternative.me liefert NUR den Crypto F&G – komplett anderer Index!
+  try {
+    const cnnUrl = 'https://production.dataviz.cnn.io/index/fearandgreed/graphdata/';
+    const proxy  = `https://api.allorigins.win/get?url=${encodeURIComponent(cnnUrl)}`;
+    const res    = await fetch(proxy);
+    const outer  = await res.json();
+    const data   = JSON.parse(outer.contents);
+
+    // CNN Format: { fear_and_greed: { score, rating, timestamp }, fear_and_greed_historical: { data: [{x, y, rating}] } }
+    const current = data?.fear_and_greed;
+    const history = data?.fear_and_greed_historical?.data || [];
+
+    if (current?.score != null) {
+      // In Alternative.me Format konvertieren für Kompatibilität
+      const result = [{
+        value:      Math.round(current.score).toString(),
+        value_classification: current.rating || 'Unknown',
+        timestamp:  Math.floor(Date.now() / 1000).toString(),
+        source:     'CNN',
+      }];
+      // Historische Werte aus CNN History (bis 30 Tage)
+      history.slice(0, 29).reverse().forEach(h => {
+        result.push({
+          value:     Math.round(h.y).toString(),
+          timestamp: Math.floor(new Date(h.x).getTime() / 1000).toString(),
+          source:    'CNN',
+        });
+      });
+      console.log(`F&G: CNN Stock Market Index = ${current.score} (${current.rating})`);
+      return result;
+    }
+  } catch(e) {
+    console.warn('CNN F&G fehlgeschlagen:', e.message);
+  }
+
+  // Quelle 2: Alternative.me (Crypto F&G – nur als Notfall-Fallback)
+  // Hinweis: dieser Wert ist der CRYPTO Fear & Greed, nicht der Aktienmarkt!
   const fngUrl = 'https://api.alternative.me/fng/?limit=30&format=json';
-  // Direktversuch (funktioniert wenn CORS erlaubt)
   try {
     const res = await fetch(fngUrl);
     const data = await res.json();
-    if (data?.data?.length > 0) return data.data;
-  } catch(e) { /* CORS blockiert – Proxy versuchen */ }
-  // Fallback via allorigins
+    if (data?.data?.length > 0) {
+      // Warnung setzen dass es der Crypto-Index ist
+      const nameEl = document.querySelector('#card-fg .metric-name');
+      if (nameEl) nameEl.textContent = 'F&G (Crypto-Index ⚠)';
+      console.warn('F&G: Fallback auf Crypto-Index (Alternative.me)');
+      return data.data;
+    }
+  } catch(e) { /* ignorieren */ }
+
+  // Quelle 3: allorigins Fallback für Alternative.me
   try {
     const res2 = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(fngUrl)}`);
     const outer = await res2.json();
     const data2 = JSON.parse(outer.contents);
-    if (data2?.data?.length > 0) return data2.data;
+    if (data2?.data?.length > 0) {
+      const nameEl = document.querySelector('#card-fg .metric-name');
+      if (nameEl) nameEl.textContent = 'F&G (Crypto-Index ⚠)';
+      return data2.data;
+    }
   } catch(e) {
-    console.warn('F&G API error:', e);
+    console.warn('F&G alle Quellen fehlgeschlagen:', e);
   }
   return null;
 }
